@@ -3,7 +3,7 @@ from shutil import rmtree
 from setuptools import setup
 
 setup(
-    name="django-elasticmodels",
+    name="elasticmodels",
     version=__import__('elasticmodels').__version__,
     url='https://github.com/PSU-OIT-ARC/elasticmodels',
     author='Matt Johnson',

@@ -4,6 +4,10 @@ Elasticmodels helps you index and query your Django models using elasticsearch.
 It is designed to be an alternative to django-haystack when you need more control over
 your index creation, and you are always going to use elasticsearch.
 
+# Install
+
+    pip install elasticmodels
+
 # Setup
 
 ## settings.py
