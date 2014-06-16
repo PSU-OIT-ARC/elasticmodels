@@ -8,7 +8,7 @@ setup(
     url='https://github.com/PSU-OIT-ARC/elasticmodels',
     author='Matt Johnson',
     author_email='mdj2@pdx.edu',
-    description="",
+    description="Elasticmodels helps you index and query your Django models using elasticsearch",
     packages=['elasticmodels','elasticmodels.management', 'elasticmodels.management.commands'],
     zip_safe=False,
     install_requires=[
