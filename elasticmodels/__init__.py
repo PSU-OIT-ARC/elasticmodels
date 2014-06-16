@@ -1,8 +1,9 @@
 import six
 import elasticutils as eu
+import elasticsearch
 from django.conf import settings
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 es = lambda: eu.get_es(urls=[settings.ELASTIC_SEARCH_URL], index=settings.ELASTIC_SEARCH_INDEX)
 s = lambda: eu.S().es(urls=[settings.ELASTIC_SEARCH_URL]).indexes(settings.ELASTIC_SEARCH_INDEX)
