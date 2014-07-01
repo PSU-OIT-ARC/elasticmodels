@@ -20,11 +20,25 @@ def make_searchable(object, refresh=True):
         raise ValueError("You tried to index %r but its PK is None" % obj)
 
     index = index_registry[object.__class__]
-    id = index.id(object)
-    body = index.prepare(object)
-    es().index(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id, body=body)
-    if refresh:
-        es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+
+    # see if we should be indexing this object
+    # (there might be a slicker way to do this; I wanted to avoid extra db queries)
+    is_indexable = True        
+    for key, value in index.filter_params.iteritems():
+        if object.__dict__[key] != value:
+            is_indexable = False
+
+    id = index.id(object)            
+    if is_indexable:        
+        body = index.prepare(object)
+        es().index(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id, body=body)
+        if refresh:
+            es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+    else:
+        if refresh:
+            es().delete(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id)
+            es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+            
 
 def clear_index():
     """Deletes (if it exists) and recreates the index"""
@@ -72,6 +86,7 @@ class Indexable(six.with_metaclass(IndexableBase)):
     override mapping() and prepare(obj)
     """
     model = None
+    filter_params = {}
 
     @property
     def doc_type(self):

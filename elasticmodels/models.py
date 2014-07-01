@@ -8,7 +8,10 @@ from django.db.models.loading import get_apps
 apps = get_apps()
 for app in apps:
     try:
+
         __import__(app.__package__ + ".search_indexes")
+        print "%s imported!" % str(app)
+
     except (ImportError, TypeError):
         # The package was None, or the search_indexes file doesn't exist
         pass

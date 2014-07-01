@@ -8,8 +8,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         clear_index()
+
         for model_class, index in index_registry.items():
-            model = index.model
+            
+            model = index.model            
+            
             es().indices.put_mapping(
                 index=settings.ELASTIC_SEARCH_INDEX,
                 doc_type=index.doc_type,
@@ -19,7 +22,8 @@ class Command(BaseCommand):
             )
 
             es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
-            for obj in model.objects.all():
+            #for obj in model.objects.all():
+            for obj in model.objects.filter(**(index.filter_params)):
                 print "indexing %s pk = %d" % (obj.__class__.__name__, obj.pk)
                 # TODO use a bulk update for this
                 make_searchable(obj, refresh=False)
