@@ -23,7 +23,8 @@ class Command(BaseCommand):
 
             es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
             #for obj in model.objects.all():
-            for obj in model.objects.filter(**(index.filter_params)):
+            for obj in index.get_queryset():
+            #for obj in model.objects.filter(**(index.filter_params)):
                 print "indexing %s pk = %d" % (obj.__class__.__name__, obj.pk)
                 # TODO use a bulk update for this
                 make_searchable(obj, refresh=False)
