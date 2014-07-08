@@ -3,7 +3,6 @@ import elasticutils as eu
 import elasticsearch
 from django.conf import settings
 
-__version__ = "0.0.2"
 
 es = lambda: eu.get_es(urls=[settings.ELASTIC_SEARCH_URL], index=settings.ELASTIC_SEARCH_INDEX)
 s = lambda: eu.S().es(urls=[settings.ELASTIC_SEARCH_URL]).indexes(settings.ELASTIC_SEARCH_INDEX)
@@ -21,26 +20,27 @@ def make_searchable(object, refresh=True):
 
     index = index_registry[object.__class__]
 
-    id = index.id(object)            
+    id = index.id(object)
     body = index.prepare(object)
     es().index(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id, body=body)
     if refresh:
         es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
-            
-def make_unsearchable(object):
-    '''
-    Removes an object from the search index.    
-    '''
 
+
+def make_unsearchable(object, refresh=True):
+    '''
+    Removes an object from the search index.
+    '''
     if object.pk is None:
         raise ValueError("You tried to remove %r from the index but its PK is None" % obj)
 
     index = index_registry[object.__class__]
-    
-    es().delete(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id)
-    es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
 
-            
+    id = index.id(object)
+    es().delete(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id)
+    if refresh:
+        es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+
 
 def clear_index():
     """Deletes (if it exists) and recreates the index"""

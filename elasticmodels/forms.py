@@ -2,7 +2,7 @@ from django import forms
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.conf import settings
 
-class SearchForm(forms.Form):
+class BaseSearchForm(forms.Form):
     """
     This is the base form class for search forms. It comes with a a nice q
     field that automatically searches the text field on the Model's index.
@@ -12,10 +12,21 @@ class SearchForm(forms.Form):
     q = forms.CharField(required=False, label="", widget=forms.widgets.TextInput(attrs={"placeholder": "Search"}))
     sort_by_relevance = True
 
-    def __init__(self, *args, **kwargs):
-        super(SearchForm, self).__init__(*args, **kwargs)
-        self.cleaned_data = {}
-        self.is_valid()
+    @property
+    def cleaned_data(self):
+        """
+        When cleaned_data is initially accessed, we want to ensure the form
+        gets validated which has the side effect of setting cleaned_data to
+        something.
+        """
+        if not hasattr(self, "_cleaned_data"):
+            self._cleaned_data = {}
+            self.is_valid()
+        return self._cleaned_data
+
+    @cleaned_data.setter
+    def cleaned_data(self, value):
+        self._cleaned_data = value
 
     def in_search_mode(self):
         """
@@ -41,9 +52,9 @@ class SearchForm(forms.Form):
         """
         raise NotImplementedError("You must implement the queryset method!")
 
-    def results(self, page):
+    def results(self):
         """
-        This returns a Paginator page object of the results
+        This returns the DB objects that matches the search
         """
         if self.in_search_mode():
             objects = self.search()
@@ -53,6 +64,28 @@ class SearchForm(forms.Form):
         else:
             objects = self.queryset()
 
+        if self.in_search_mode():
+            # if we are doing a search, we need to swap out the paginator's
+            # object_list with the actual preparation objects (since those aren't
+            # stored in the search index). Build up a dict that has the object
+            # pk as a key, and the order of the object as the value, so we can
+            # sort the objects by it
+            pk_lookup = dict((int(search_result.pk), i) for i, search_result in enumerate(objects))
+            objects = self.queryset().filter(pk__in=pk_lookup.keys())
+            # we need to sort the objects based on the order they were returned
+            # by elasticsearch
+            if self.sort_by_relevance:
+                objects = sorted(objects, key=lambda item: pk_lookup[item.pk])
+
+        return objects
+
+
+class PaginateMixin(object):
+    """
+    Paginates the results of the BaseSearchForm.results()
+    """
+    def results(self, page):
+        objects = super(PaginateMixin, self).results()
         paginator = Paginator(objects, settings.ITEMS_PER_PAGE)
         try:
             a_page = paginator.page(page)
@@ -61,17 +94,8 @@ class SearchForm(forms.Form):
         except EmptyPage:
             a_page = paginator.page(paginator.num_pages)
 
-        if self.in_search_mode():
-            # if we are doing a search, we need to swap out the paginator's
-            # object_list with the actual preparation objects (since those aren't
-            # stored in the search index). Build up a dict that has the object
-            # pk as a key, and the order of the object as the value, so we can
-            # sort the objects by it
-            pk_lookup = dict((int(search_result.pk), i) for i, search_result in enumerate(a_page.object_list))
-            a_page.object_list = list(self.queryset().filter(pk__in=pk_lookup.keys()))
-            # we need to sort the objects based on the order they were returned
-            # by elasticsearch
-            if self.sort_by_relevance:
-                a_page.object_list.sort(key=lambda item: pk_lookup[item.pk])
-
         return a_page
+
+
+class SearchForm(PaginateMixin, BaseSearchForm):
+    pass
