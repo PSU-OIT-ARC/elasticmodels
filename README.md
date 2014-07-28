@@ -16,12 +16,13 @@ In your Django settings file, define these variables:
 
 ```python
 
-# the URL to your elasticsearch instance
-ELASTIC_SEARCH_URL = "http://127.0.0.1:9200/"
-# the name of your index in elasticsearch
-ELASTIC_SEARCH_INDEX = "foobar"
-# a dict of configuration information you want passed to elasticsearch when
-# your index is created
+ELASTIC_SEARCH_CONNECTION = {
+    "urls": ["http://localhost:9200/"],
+    "indexes": ["the_name_of_your_es_index"],
+    # "http_auth": "username:password",
+}
+
+# these are used when your index is created
 ELASTIC_SEARCH_SETTINGS = {
     "settings": {
         "analysis": {

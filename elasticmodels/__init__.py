@@ -4,8 +4,8 @@ import elasticsearch
 from django.conf import settings
 
 
-es = lambda: eu.get_es(urls=[settings.ELASTIC_SEARCH_URL], index=settings.ELASTIC_SEARCH_INDEX)
-s = lambda: eu.S().es(urls=[settings.ELASTIC_SEARCH_URL]).indexes(settings.ELASTIC_SEARCH_INDEX)
+es = lambda: eu.get_es(**settings.ELASTIC_SEARCH_CONNECTION)
+s = lambda: eu.S().es(**settings.ELASTIC_SEARCH_CONNECTION).indexes(*settings.ELASTIC_SEARCH_CONNECTION['indexes'])
 
 # this maps a model.__class__ to its subclass of Indexable
 index_registry = {}
