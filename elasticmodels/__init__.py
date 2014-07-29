@@ -22,9 +22,9 @@ def make_searchable(object, refresh=True):
 
     id = index.id(object)
     body = index.prepare(object)
-    es().index(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id, body=body)
+    es().index(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'], doc_type=index.doc_type, id=id, body=body)
     if refresh:
-        es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+        es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'])
 
 
 def make_unsearchable(object, refresh=True):
@@ -37,18 +37,18 @@ def make_unsearchable(object, refresh=True):
     index = index_registry[object.__class__]
 
     id = index.id(object)
-    es().delete(index=settings.ELASTIC_SEARCH_INDEX, doc_type=index.doc_type, id=id)
+    es().delete(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'], doc_type=index.doc_type, id=id)
     if refresh:
-        es().indices.refresh(index=settings.ELASTIC_SEARCH_INDEX)
+        es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'])
 
 
 def clear_index():
     """Deletes (if it exists) and recreates the index"""
     try:
-        es().indices.delete(index=settings.ELASTIC_SEARCH_INDEX)
+        es().indices.delete(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'])
     except elasticsearch.exceptions.NotFoundError:
         pass
-    es().indices.create(index=settings.ELASTIC_SEARCH_INDEX, body=settings.ELASTIC_SEARCH_SETTINGS)
+    es().indices.create(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'], body=settings.ELASTIC_SEARCH_SETTINGS)
 
 
 class IndexableBase(type):
