@@ -18,7 +18,7 @@ In your Django settings file, define these variables:
 
 ELASTIC_SEARCH_CONNECTION = {
     "urls": ["http://localhost:9200/"],
-    "indexes": ["the_name_of_your_es_index"],
+    "index": "the_name_of_your_es_index",
     # "http_auth": "username:password",
 }
 

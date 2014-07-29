@@ -13,18 +13,18 @@ class Command(BaseCommand):
         for model_class, index in index_registry.items():
             model = index.model
             es().indices.put_mapping(
-                index=settings.ELASTIC_SEARCH_CONNECTION['indexes'],
+                index=settings.ELASTIC_SEARCH_CONNECTION['index'],
                 doc_type=index.doc_type,
                 body={
                     index.doc_type: index.mapping()
                 }
             )
 
-            es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'])
+            es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['index'])
             #for obj in model.objects.all():
             for obj in index.get_queryset():
             #for obj in model.objects.filter(**(index.filter_params)):
                 print("indexing %s pk = %d" % (obj.__class__.__name__, obj.pk))
                 # TODO use a bulk update for this
                 make_searchable(obj, refresh=False)
-            es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['indexes'])
+            es().indices.refresh(index=settings.ELASTIC_SEARCH_CONNECTION['index'])
