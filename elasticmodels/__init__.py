@@ -10,6 +10,12 @@ s = lambda: eu.S().es(**settings.ELASTIC_SEARCH_CONNECTION).indexes(settings.ELA
 # this maps a model.__class__ to its subclass of Indexable
 index_registry = {}
 
+
+def S():
+    """Returns an elasticutils.S instance that searches all the registered doctypes"""
+    return s().doctypes(*[index.doc_type for index in index_registry.values()])
+
+
 def make_searchable(object, refresh=True):
     """
     Indexes a model object. Refreshes the index too, so the object is available
