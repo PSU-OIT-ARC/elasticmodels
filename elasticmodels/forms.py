@@ -1,4 +1,5 @@
 import itertools
+from elasticutils import S
 from django import forms
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.conf import settings
@@ -66,8 +67,14 @@ class BaseSearchForm(forms.Form):
         if self.cleaned_data.get("q"):
             objects = objects.query(content__match=self.cleaned_data['q'])
 
-        # get ALL the pk values for the matches
-        pks = objects.values_list("pk").everything()
+        # get ALL the pk values for the matches. If objects isn't an S
+        # instance, then we just return all the objects, since we can't really
+        # do anything with it. That handles the case where the search method
+        # returns a queryset or list for example.
+        if isinstance(objects, S):
+            pks = objects.values_list("pk").everything()
+        else:
+            return objects
         # Create a mapping that maps a pk, to the position the object should
         # appear in a list. This allows us to order things by relevance.
         # The [0][0] index is used because ES (for some reason) turns fields

@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name="elasticmodels",
-    version="0.0.9",
+    version="0.0.10",
     url='https://github.com/PSU-OIT-ARC/elasticmodels',
     author='Matt Johnson',
     author_email='mdj2@pdx.edu',
