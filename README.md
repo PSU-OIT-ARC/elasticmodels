@@ -1,136 +1,198 @@
-# Elasticmodels
+This is a package that allows indexing of django models using
+elasticsearch. It requires django, elasticsearch-py and a running instance of
+elasticsearch.
 
-Elasticmodels helps you index and query your Django models using elasticsearch.
-It is designed to be an alternative to django-haystack when you need more control over
-your index creation, and you are always going to use elasticsearch.
+# Features:
+- Management commands (rebuild_index and update_index, clear_index)
+- Django signal receivers on save and delete for keeping ES in sync
+- Complex field type support (ObjectField, NestedField, ListField)
 
-# Install
+# Usage:
+Add ‘elasticmodels’ to INSTALLED_APPS
 
-    pip install elasticmodels
+You must define ELASTICSEARCH_CONNECTIONS in your django settings.
 
-# Setup
-
-## settings.py
-
-In your Django settings file, define these variables:
-
+For example:
 ```python
-
-ELASTIC_SEARCH_CONNECTION = {
-    "urls": ["http://localhost:9200/"],
-    "index": "the_name_of_your_es_index",
-    # "http_auth": "username:password",
-}
-
-# these are used when your index is created
-ELASTIC_SEARCH_SETTINGS = {
-    "settings": {
-        "analysis": {
-            "analyzer": {
-                "snowball": {
-                    "type": "snowball",
-                    "stopwords": "_none_"
-                }
-            }
-        }
+ELASTICSEARCH_CONNECTIONS = {
+    'default': {
+        'HOSTS': ['http://localhost:9200',],
+        'INDEX_NAME': 'my_index',
+    }
+    'fish': {
+        'HOSTS': ['http://example.com:9200',],
+        'INDEX_NAME': 'fish',
     }
 }
 ```
 
-Add elasticmodels to INSTALLED_APPS:
+Now consider a model like this:
 
 ```python
+class Car(models.Model):
+    license = models.CharField(primary_key=True)
+    color = models.CharField()
+    type = models.IntegerField(choices=[
+        (1, "Sedan"),
+        (2, "Truck"),
+        (4, "SUV"),
+    ])
 
-INSTALLED_APPS = (
-    ...
-    'elasticmodels',
-)
-```
+    def type_to_string(self):
+        """Convert the type field to its string representation (the boneheaded way)"""
+        if self.type == 1:
+            return "Sedan"
+        elif self.type == 2:
+            return "Truck"
+        else:
+            return "SUV"
 
-## app/search_indexes.py
-
-In a Django app, create a search_indexes.py file, like so:
-
-```python
-
-from elasticmodels import Indexable
-from django.template.loader import render_to_string
-from .models import File, FileTag
-
-class FileIndex(Indexable):
-    # specify the model class this index is for
-    model = File
-
-    def mapping(self):
-        """
-        Return the elasticsearch mapping for this model type
-        """
+    @property
+    def extra_data(self):
+        """Generate some extra data to save with the model in ES"""
         return {
-            "properties": {
-                "pk": {"type": "integer", "index": "not_analyzed"},
-                "content": {"type": "string", "analyzer": "snowball"},
-                "tags": {"type": "string", "analyzer": "keyword"},
-                "org_id": {"type": "integer", "index": "not_analyzed"},
-                "type": {"type": "integer", "analyzer": "keyword"},
-                "uploaded_by_id": {"type": "integer", "analyzer": "keyword"},
-            }
-        }
-
-    def prepare(self, obj):
-        """
-        Return obj transformed into a dict that corresponds to the mapping
-        you defined. This is what will be indexed by elasticsearch.
-        """
-        return {
-            "pk": obj.pk,
-            "content": render_to_string("files/search.txt", {"object": obj}),
-            "tags": [ft.tag.name for ft in FileTag.objects.filter(file=obj).select_related("tag")],
-            "org_id": obj.org_id,
-            "type": obj.type,
-            "uploaded_by_id": obj.uploaded_by_id,
+            "a_key": "a value",
+            "another_key": 5
         }
 ```
 
-# Usage
-
-## Deleting and recreating your index
-
-    ./manage.py rebuild_index
-
-**This will delete the entire elasticsearch index** and recreate it. All your
-model objects will be re-indexed.
-
-## Adding an individual object to the index
+To make this model work with Elasticsearch, create a subclass of
+`elasticmodels.Index`:
 
 ```python
+from elasticmodels import Index, StringField, IntegerField
 
-from elasticmodels import make_searchable
+class CarIndex(Index):
 
-f = File(name="Foo", type=1)
-f.save()
+    # a field in an elasticsearch mapping will be created with the name
+    # "type". When the model is saved, the ES field will be populated with the
+    # value of calling the "type_to_string" method on the model. Regular
+    # (non-callable) attributes work just as well
+    type = StringField(attr="type_to_string")
 
-make_searchable(f)
+    # This creates a field for the "extra_data" property on the model
+    extra_data = NestedField(properties={
+        "a_key": StringField,
+        "a_different_name": IntegerField(attr="another_key")
+    })
+
+    # the inner Meta class is used to define other information about the index
+    class Meta:
+        # list the fields on your model that you want to include in the index with
+        # the elasticsearch field typed guessed automatically based on the model
+        # field type
+        fields = [
+            'license',
+            'color',
+        ]
+
+        # you can specify which ELASTICSEARCH_CONNECTION to use for this index,
+        # the default is "default"
+        using = "default"
 
 ```
 
-## Querying
+The value indexed by elasticsearch for a particular field can be
+overridden by creating a `prepare_foo` method on the Index subclass (where foo is
+the name of the field). The method gets passed the model instance.
 
-Your subclass of elasticmodels.Indexable has a class attribute called `objects`
-which returns an elasticutils `S` instance. You can then use whatever methods are
-available in elasticutils on the S instance.
-
-See:
-http://elasticutils.readthedocs.org/en/latest/searching.html
-http://elasticutils.readthedocs.org/en/latest/searching.html#filters-filter
-http://elasticutils.readthedocs.org/en/latest/searching.html#queries-query
-http://elasticutils.readthedocs.org/en/latest/searching.html#advanced-filters-f-and-filter-raw
+For example:
 
 ```python
+class CarIndex(Index):
+    # ... #
+    some_field = ObjectField(properties={
+        'hi': StringField,
+    })
 
-from elasticutils import F
-from .search_indexes import FileIndex
-
-results = FileIndex.objects.filter(F(type=1) | F(type=2)).query(content__match="foo")
-for result in results:
-    print result.pk, result.content
+    def prepare_some_field(self, instance):
+        # this gets called *instead of* ObjectField.get_from_instance(instance)
+        return {"hi": instance.other}
 ```
+
+Back on the Model class, add the CarIndex like you would a manager:
+
+```python
+class Car(models.Model):
+    # ... #
+
+    search = CarIndex()
+```
+
+When you use `Car.search.all()` or `Car.search.filter(**kwargs)` or
+`Car.search.query(**kwargs)` you get back an Elasticsearch-DSL search object
+prefiltered based on the document type.
+
+# Management Commands
+
+`clear_index [--using default --using ...] [--noinput] <app[.model] app[.model] ...>`
+
+By default, this clears every model index (an Elasticsearch mapping), prompting
+before doing it. You can limit which connections and models/apps are affected.
+
+`update_index [--using default --using ...] [--start yyyy-mm-dd] [--end yyyy-mm-dd] [<app[.model] app[.model] ...>`
+
+Update every model index. You can limit the scope of the updates by passing a
+start and end date, and/or which models/apps/connections to use.
+
+`rebuild_index [--using default --using ...] [--noinput] <app[.model] app[.model] ...>`
+
+Shortcut to clear_index and update_index.
+
+# Field Classes
+
+Most elasticsearch field types are supported. The `attr` argument is a dotted
+"attribute path" which will be looked up on the model using Django template
+semantics (dict lookup, attribute lookup, list index lookup). For example
+`attr="foo.bar"` will try to fetch the first value that doesn't raise an
+exception in this order:
+
+```
+instance['foo']
+    instance['foo']['bar']
+    instance['foo'].bar
+    instance['foo'][bar]
+
+instance.foo
+    instance.foo['bar']
+    instance.foo.bar
+    instance.foo[bar]
+
+instance[foo]
+    instance[foo]['bar']
+    instance[foo].bar
+    instance[foo][bar]
+```
+
+Extra keyword arguments are passed directly to elasticsearch when the field is
+created.
+
+## Simple Fields
+
+- StringField(attr=None, \*\*elasticsearch_properties)
+- FloatField(attr=None, \*\*elasticsearch_properties)
+- DoubleField(attr=None, \*\*elasticsearch_properties)
+- ByteField(attr=None, \*\*elasticsearch_properties)
+- ShortField(attr=None, \*\*elasticsearch_properties)
+- IntegerField(attr=None, \*\*elasticsearch_properties)
+- DateField(attr=None, \*\*elasticsearch_properties)
+- BooleanField(attr=None, \*\*elasticsearch_properties)
+
+## Complex Fields
+
+`properties` is a dict where the key is a field name, and the value is a field
+instance or class.
+
+- TemplateField(template_name, \*\*elasticsearch_properties)
+- ObjectField(properties, attr=None, \*\*elasticsearch_properties)
+- NestedField(properties, attr=None, \*\*elasticsearch_properties)
+- ListField(field)
+
+# Tests:
+
+To run the test suite for Python3
+
+    make test
+
+It is assumed you have Elasticsearch running on localhost:9200. An index will
+be used called "elasticmodels-unit-test-db"

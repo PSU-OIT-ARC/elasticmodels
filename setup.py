@@ -1,21 +1,19 @@
-#!/usr/bin/env python
-from shutil import rmtree
-from setuptools import setup
+import sys
+from setuptools import find_packages, setup
 
 setup(
-    name="elasticmodels",
-    version="0.0.10",
-    url='https://github.com/PSU-OIT-ARC/elasticmodels',
-    author='Matt Johnson',
-    author_email='mdj2@pdx.edu',
-    description="Elasticmodels helps you index and query your Django models using elasticsearch",
-    packages=['elasticmodels','elasticmodels.management', 'elasticmodels.management.commands'],
-    zip_safe=False,
-    install_requires=[
-        'elasticutils',
-        'six',
-    ],
-    classifiers=[
-        'Framework :: Django',
-    ],
+    name='elasticmodels',
+    version='0.1.0',
+    install_requires=['elasticsearch','elasticsearch-dsl'],
+    packages=find_packages(),
+    long_description=open('README.md').read(),
+    author='Andrew Stoneman',
+    extras_require={
+        'dev': [
+            "mock",
+            "model_mommy",
+            "coverage",
+            "django" + ("<1.7" if sys.version_info[:2] < (2, 7) else "")
+        ],
+    }
 )
