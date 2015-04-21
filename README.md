@@ -1,5 +1,5 @@
-This is a package that allows indexing of django models using
-elasticsearch. It requires django, elasticsearch-py and a running instance of
+This is a package that allows indexing of django models using elasticsearch. It
+requires django, elasticsearch-py, elasticsearch-dsl and a running instance of
 elasticsearch.
 
 # Features:
@@ -7,7 +7,7 @@ elasticsearch.
 - Django signal receivers on save and delete for keeping ES in sync
 - Complex field type support (ObjectField, NestedField, ListField)
 
-# Usage:
+# Quick Start:
 Add ‘elasticmodels’ to INSTALLED_APPS
 
 You must define ELASTICSEARCH_CONNECTIONS in your django settings.
@@ -32,82 +32,28 @@ Now consider a model like this:
 class Car(models.Model):
     license = models.CharField(primary_key=True)
     color = models.CharField()
+    description = models.TextField()
     type = models.IntegerField(choices=[
         (1, "Sedan"),
         (2, "Truck"),
         (4, "SUV"),
     ])
-
-    def type_to_string(self):
-        """Convert the type field to its string representation (the boneheaded way)"""
-        if self.type == 1:
-            return "Sedan"
-        elif self.type == 2:
-            return "Truck"
-        else:
-            return "SUV"
-
-    @property
-    def extra_data(self):
-        """Generate some extra data to save with the model in ES"""
-        return {
-            "a_key": "a value",
-            "another_key": 5
-        }
 ```
 
 To make this model work with Elasticsearch, create a subclass of
 `elasticmodels.Index`:
 
 ```python
-from elasticmodels import Index, StringField, IntegerField
+from elasticmodels import Index, StringField, IntegerField, NestedField
 
 class CarIndex(Index):
-
-    # a field in an elasticsearch mapping will be created with the name
-    # "type". When the model is saved, the ES field will be populated with the
-    # value of calling the "type_to_string" method on the model. Regular
-    # (non-callable) attributes work just as well
-    type = StringField(attr="type_to_string")
-
-    # This creates a field for the "extra_data" property on the model
-    extra_data = NestedField(properties={
-        "a_key": StringField,
-        "a_different_name": IntegerField(attr="another_key")
-    })
-
-    # the inner Meta class is used to define other information about the index
     class Meta:
-        # list the fields on your model that you want to include in the index with
-        # the elasticsearch field typed guessed automatically based on the model
-        # field type
         fields = [
             'license',
             'color',
+            'description',
+            'type',
         ]
-
-        # you can specify which ELASTICSEARCH_CONNECTION to use for this index,
-        # the default is "default"
-        using = "default"
-
-```
-
-The value indexed by elasticsearch for a particular field can be
-overridden by creating a `prepare_foo` method on the Index subclass (where foo is
-the name of the field). The method gets passed the model instance.
-
-For example:
-
-```python
-class CarIndex(Index):
-    # ... #
-    some_field = ObjectField(properties={
-        'hi': StringField,
-    })
-
-    def prepare_some_field(self, instance):
-        # this gets called *instead of* ObjectField.get_from_instance(instance)
-        return {"hi": instance.other}
 ```
 
 Back on the Model class, add the CarIndex like you would a manager:
@@ -119,9 +65,139 @@ class Car(models.Model):
     search = CarIndex()
 ```
 
-When you use `Car.search.all()` or `Car.search.filter(**kwargs)` or
-`Car.search.query(**kwargs)` you get back an Elasticsearch-DSL search object
-prefiltered based on the document type.
+Elasticmodels will automatically setup a mapping in Elasticsearch for the Car
+model, where the Elasticsearch fields are derived from the `fields` attribute
+on the Meta class.
+
+To create the Elasticsearch index and mappings, use the rebuild_index
+management command:
+
+    ./manage.py rebuild_index
+
+Now, when you do something like:
+
+    car = Car(license="PYNERD", color="red", type=1, description="A beautiful car")
+    car.save()
+
+The object will be saved in Elasticsearch too. To get a pre-filtered
+Elasticsearch-DSL Search instance, use:
+
+    Car.search.all()
+
+    # or
+    Car.search.filter("term", color="red")
+    # which is just a shortcut for Car.search.all().filter()
+
+    # or
+    Car.search.query("match", description="beautiful")
+    # which is just a shortcut for Car.search.all().query()
+
+The return value of these method calls is an Elasticsearch-DSL instance.
+
+## Using Different Attributes for Model Fields
+
+Let's say you don't want to store the type of the car as an integer, but as the
+corresponding string instead. You need some way to convert the type field on
+the model to a string, so we'll just add a method for it:
+
+```python
+class Car(models.Model):
+    # ... #
+    def type_to_string(self):
+        """Convert the type field to its string representation (the boneheaded way)"""
+        if self.type == 1:
+            return "Sedan"
+        elif self.type == 2:
+            return "Truck"
+        else:
+            return "SUV"
+```
+
+Now we need to tell our Index subclass to use that method instead of just
+accessing the `type` field on the model directly. Change the CarIndex to look
+like this:
+
+```python
+class CarIndex(Index):
+    # add a string field to the Elasticsearch mapping called type, the value of
+    # which is derived from the model's type_to_string attribute
+    type = StringField(attr="type_to_string")
+
+    class Meta:
+        # we removed the type field from here
+        fields = [
+            'license',
+            'color',
+            'description',
+        ]
+```
+
+Of course, we need to rebuild the index `./manage.py rebuild_index` after we
+make a change like this.
+
+Now when a Car is saved, to determine the value to use for the "type" field, it
+looks up the attribute "type_to_string", sees that its callable, and calls it
+(instead of just accessing `model_instance.type` directly).
+
+## Using NestedField and ObjectField
+
+Elasticsearch supports object and nested field types. So does Elasticmodels.
+
+Consider a property like this on our Car model:
+
+```python
+class Car(models.Model):
+    # ... #
+    @property
+    def extra_data(self):
+        """Generate some extra data to save with the model in ES"""
+        return {
+            "a_key": "a value",
+            "another_key": 5
+        }
+```
+
+We can add a NestedField or ObjectField to our CarIndex to save this extra_data
+to ES.
+
+```python
+class CarIndex(Index):
+    type = StringField(attr="type_to_string")
+
+    extra_data = NestedField(properties={
+        "a_key": StringField,
+        "number": IntegerField(attr="another_key")
+    })
+
+    class Meta:
+        fields = [
+            'license',
+            'color',
+            'description',
+        ]
+```
+
+When a Car is saved, `model_instance.extra_data` will be looked up/called, and whatever
+it returns, will be used as the basis to populate the sub-fields listed in `properties`.
+
+## Using prepare_field
+
+Sometimes, you need to do some extra prepping before a field should be saved to
+elasticsearch. You can add a `prepare_foo(self, instance)` method to an Index
+(where foo is the name of the field), and that will be called when the field
+needs to be saved.
+
+```python
+class CarIndex(Index):
+    # ... #
+
+    foo = StringField()
+
+    def prepare_foo(self, instance):
+        return " ".join(instance.foos)
+
+    # ... #
+```
 
 # Management Commands
 
@@ -148,24 +224,24 @@ semantics (dict lookup, attribute lookup, list index lookup). For example
 exception in this order:
 
 ```
-instance['foo']
+If instance['foo'] doesn't raise an exception:
     instance['foo']['bar']
     instance['foo'].bar
     instance['foo'][bar]
 
-instance.foo
+else if instance.foo doesn't raise an exception:
     instance.foo['bar']
     instance.foo.bar
     instance.foo[bar]
 
-instance[foo]
+else if instance[foo] doesn't raise an exception:
     instance[foo]['bar']
     instance[foo].bar
     instance[foo][bar]
 ```
 
-Extra keyword arguments are passed directly to elasticsearch when the field is
-created.
+**Extra keyword arguments are passed directly to elasticsearch when the mapping is
+created.**
 
 ## Simple Fields
 
@@ -187,6 +263,23 @@ instance or class.
 - ObjectField(properties, attr=None, \*\*elasticsearch_properties)
 - NestedField(properties, attr=None, \*\*elasticsearch_properties)
 - ListField(field)
+
+# Index Meta Options
+
+    class Meta:
+        # a list of model field names as strings, which will be included in the
+        # ES mapping
+        fields = []
+        # the mapping name to use for this in elasticsearch. The
+        # default is derived from the app and model name
+        doc_type = "appname_modelname"
+        # the ELASTICSEARCH_CONNECTIONS connection to use for this index
+        using = "default"
+        # the ES dynamic property to use for the mapping
+        dynamic = "string"
+        # the field to use for management commands when using the `--start` and
+        # `--end` options. The default is None.
+        date_field = "modified_on"
 
 # Tests:
 
