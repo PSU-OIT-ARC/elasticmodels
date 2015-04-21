@@ -79,7 +79,7 @@ Now, when you do something like:
     car = Car(license="PYNERD", color="red", type=1, description="A beautiful car")
     car.save()
 
-The object will be saved in Elasticsearch too. To get a pre-filtered
+The object will be saved in Elasticsearch too (using a signal handler). To get a pre-filtered
 Elasticsearch-DSL Search instance, use:
 
     Car.search.all()
@@ -197,6 +197,26 @@ class CarIndex(Index):
         return " ".join(instance.foos)
 
     # ... #
+```
+
+## Signal Receivers
+
+Elasticmodels watches for the post_save and post_delete signals and updates the
+ES index appropriately.
+
+## Suspended Updates
+
+If you're updating a bunch of objects at once, you should use the
+suspended_updates context manager so you can more efficently batch process the
+ES updates:
+
+```python
+from elasticmodels import suspended_updates
+with suspended_updates():
+    model1.save()
+    model2.save()
+    model3.save()
+    model4.delete()
 ```
 
 # Management Commands
