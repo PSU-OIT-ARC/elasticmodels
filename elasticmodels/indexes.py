@@ -368,7 +368,9 @@ class Index(metaclass=IndexBase):
             '_index': self.index,
             '_type': self.doc_type,
             '_id': model.pk,
-            '_source': self.prepare(model),
+            # we don't do all the work of preparing a model when we're deleting
+            # it
+            '_source': self.prepare(model) if action != "delete" else None,
         } for model in thing]
 
         # if running in the suspended_updates context, we just save the thing
