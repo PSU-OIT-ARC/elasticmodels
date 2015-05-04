@@ -18,7 +18,6 @@ from .exceptions import RedeclaredFieldError, ModelFieldNotMappedError
 
 # this allows us to queue up index updates (in a thread safe manner)
 local_storage = threading.local()
-local_storage.bulk_queue = None
 
 model_field_class_to_field_class = {
     models.AutoField: IntegerField,
@@ -94,7 +93,7 @@ def suspended_updates():
             model3.save()
             model4.delete()
     """
-    if local_storage.bulk_queue is None:
+    if getattr(local_storage, "bulk_queue", None) is None:
         local_storage.bulk_queue = defaultdict(list)
 
     try:
@@ -374,7 +373,7 @@ class Index(metaclass=IndexBase):
 
         # if running in the suspended_updates context, we just save the thing
         # for later
-        if local_storage.bulk_queue is not None:
+        if getattr(local_storage, "bulk_queue", None) is not None:
             local_storage.bulk_queue[self].append(operations)
             # should be flush the bulk_queue at a reasonable point?
             return None

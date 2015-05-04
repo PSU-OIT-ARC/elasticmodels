@@ -338,8 +338,8 @@ class IndexTest(ESTest):
             })
 
         # test local storage queuing
-        queue = {self.Car.search: []}
-        with patch("elasticmodels.indexes.local_storage.bulk_queue", queue):
+        local_storage = Mock(bulk_queue={self.Car.search: []})
+        with patch("elasticmodels.indexes.local_storage", local_storage):
             self.Car.search.update([car])
             self.assertEqual(list(queue[self.Car.search][0]), [{
                 '_index': 'elasticmodels-unit-test-db',
