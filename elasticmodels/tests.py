@@ -312,7 +312,7 @@ class IndexTest(ESTest):
         # test .update with an single model object
         with patch("elasticmodels.indexes.bulk") as m:
             self.Car.search.update(car)
-            self.assertEqual((next(m.call_args[1]['actions'])), {
+            self.assertEqual((m.call_args[1]['actions'][0]), {
                 '_id': 5,
                 '_index': 'elasticmodels-unit-test-db',
                 '_source': {
@@ -326,7 +326,7 @@ class IndexTest(ESTest):
         # test .update with an iterable
         with patch("elasticmodels.indexes.bulk") as m:
             self.Car.search.update([car])
-            self.assertEqual((next(m.call_args[1]['actions'])), {
+            self.assertEqual((m.call_args[1]['actions'])[0], {
                 '_id': 5,
                 '_index': 'elasticmodels-unit-test-db',
                 '_source': {
@@ -341,7 +341,7 @@ class IndexTest(ESTest):
         local_storage = Mock(bulk_queue={self.Car.search: []})
         with patch("elasticmodels.indexes.local_storage", local_storage):
             self.Car.search.update([car])
-            self.assertEqual(list(queue[self.Car.search][0]), [{
+            self.assertEqual(list(local_storage.bulk_queue[self.Car.search][0]), [{
                 '_index': 'elasticmodels-unit-test-db',
                 '_op_type': 'index',
                 '_type': 'elasticmodels_car',

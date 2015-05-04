@@ -363,13 +363,13 @@ class Index(metaclass=IndexBase):
         if isinstance(thing, models.Model):
             thing = [thing]
 
-        operations = ({
+        operations = [{
             '_op_type': action,
             '_index': self.index,
             '_type': self.doc_type,
             '_id': model.pk,
             '_source': self.prepare(model),
-        } for model in thing)
+        } for model in thing]
 
         # if running in the suspended_updates context, we just save the thing
         # for later
