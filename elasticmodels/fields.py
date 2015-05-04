@@ -5,6 +5,9 @@ from django.template.loader import render_to_string
 from .exceptions import VariableLookupError, UndefinedFieldNameError
 
 class BaseField:
+    def __init__(self, name=None):
+        self.name = name
+
     def get_mapping(self):
         raise NotImplementedError
 
@@ -175,6 +178,7 @@ class NestedField(ObjectField):
 
 class ListField(BaseField):
     def __init__(self, field):
+        super().__init__()
         self.field = field
 
     def get_mapping(self):

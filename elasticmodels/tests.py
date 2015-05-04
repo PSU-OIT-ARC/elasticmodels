@@ -120,6 +120,28 @@ class ObjectFieldField(TestCase):
 
 
 class ListFieldTest(TestCase):
+    def test_name_set(self):
+        """
+        This is a regression test that ensures the Field has a
+        `name` attribute
+        """
+        class CarIndex(Index):
+            colors = ListField(StringField)
+
+            def prepare_colors(self, instance):
+                # override this since there is no model attribute named "color"
+                return ["red", "green", "blue"]
+
+            class Meta:
+                fields = ['name']
+
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+
+            search = CarIndex()
+
+        self.assertEqual("colors", Car.search.fields[0].name)
+
     def test_get_mapping(self):
         field = ListField(StringField("foo"))
         self.assertEqual({
