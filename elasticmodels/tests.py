@@ -6,12 +6,13 @@ from elasticsearch import Elasticsearch, NotFoundError
 from collections import defaultdict
 import time
 
+from elasticsearch_dsl import Search
 from django.db import models, connection
 from django.test import TestCase
 from django.conf import settings
 from django.utils.timezone import utc, now
 from django.utils import timezone
-from model_mommy.mommy import prepare
+from model_mommy.mommy import prepare, make
 
 from .fields import EMField, TemplateField, StringField, ObjectField, ListField
 from .indexes import Index, suspended_updates, IndexRegistry
@@ -19,6 +20,7 @@ from .exceptions import VariableLookupError, RedeclaredFieldError
 from .management.commands.clear_index import Command as ClearCommand
 from .management.commands.update_index import Command as UpdateCommand
 from .management.commands import get_models
+from .forms import SearchForm, BaseSearchForm, Pageable
 
 
 class ESTest(TestCase):
@@ -538,3 +540,79 @@ class GetModelsTest(TestCase):
             self.assertEqual(get_models(["foo", "bar.Bar"]), set([model_a, model_b]))
             with self.assertRaises(ValueError):
                 get_models(['asdf'])
+
+
+class BaseSearchFormTest(TestCase):
+    def test_in_search_mode(self):
+        form = BaseSearchForm(index=Mock())
+        self.assertFalse(form.in_search_mode())
+
+        form = BaseSearchForm({"q": "something"}, index=Mock())
+        self.assertTrue(form.in_search_mode())
+
+    def test_cleaned_data(self):
+        form = BaseSearchForm(index=Mock())
+        # the first time cleaned_data is accessed, it should be updated
+        with patch("elasticmodels.forms.BaseSearchForm.is_valid") as is_valid:
+            self.assertFalse(is_valid.called)
+            # when this is accessed, is_valid should be called
+            form.cleaned_data
+            self.assertTrue(is_valid.called)
+
+    def test_results(self):
+        form = BaseSearchForm(index=Mock())
+        # if we're not in search mode, the results of get_queryset should be returned
+        with patch("elasticmodels.forms.BaseSearchForm.get_queryset", return_value="foo") as get_queryset:
+            self.assertEqual(form.results(), "foo")
+
+        # if the search method doesn't return a Search object, whatever it
+        # returns is the value of results()
+        form = BaseSearchForm(index=Mock())
+        with patch("elasticmodels.forms.BaseSearchForm.in_search_mode", return_value=True):
+            with patch("elasticmodels.forms.BaseSearchForm.search", return_value="asdf"):
+                self.assertEqual(form.results(), "asdf")
+
+        # if the search method returns a Search object, a call to results()
+        # should return a Pageable object
+        with patch("elasticmodels.forms.BaseSearchForm.in_search_mode", return_value=True):
+            # if the search method doesn't return a Search object, whatever it returns is the value of results()
+            with patch("elasticmodels.forms.BaseSearchForm.search", return_value=Search()):
+                self.assertEqual(type(form.results()), Pageable)
+
+
+
+class SearchFormTest(ESTest):
+    def test_results_are_filtered_based_on_queryset(self):
+        class CarIndex(Index):
+            class Meta:
+                fields = ['name']
+
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+            search = CarIndex()
+
+        with connection.schema_editor() as editor:
+            editor.create_model(Car)
+
+        # the signal handler will automatically add these to ES for us
+        car = make(Car, name="hi", pk=1)
+        car2 = make(Car, name="hi 2", pk=2)
+        car3 = make(Car, name="hi 3", pk=3)
+
+        class Form(SearchForm):
+            def get_queryset(self):
+                # we purposely exclude one of the options, so we can test that
+                # it isn't in the search results
+                return super().get_queryset().exclude(pk=1)
+
+        form = Form({"q": "hi"}, index=Car.search)
+        # the count should be 2 (not 3), since the queryset excluded Car.pk=1
+        self.assertEqual(form.search().count(), 2)
+        results = form.results(page=1)
+        self.assertEqual(set(results), set([car2, car3]))
+
+        class Form(BaseSearchForm):
+            pass
+
+        form = Form({"q": "hi"}, index=Car.search)
+        self.assertEqual(set(form.results()), set([car, car2, car3]))

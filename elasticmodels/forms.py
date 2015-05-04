@@ -1,5 +1,5 @@
 import itertools
-from elasticutils import S
+from elasticsearch_dsl import Search
 from django import forms
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.conf import settings
@@ -7,12 +7,15 @@ from django.conf import settings
 class BaseSearchForm(forms.Form):
     """
     This is the base form class for search forms. It comes with a a nice q
-    field that automatically searches the text field on the Model's index.
+    field that automatically does a multi_match search
 
     Subclasses need to implement queryset() and search()
     """
     q = forms.CharField(required=False, label="", widget=forms.widgets.TextInput(attrs={"placeholder": "Search"}))
-    sort_by_relevance = True
+
+    def __init__(self, *args, index, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.index = index
 
     @property
     def cleaned_data(self):
@@ -40,63 +43,66 @@ class BaseSearchForm(forms.Form):
 
     def search(self):
         """
-        This should return a Haystack queryset based on the values of
-        self.cleaned_data. You do not need to take into account the q field,
-        since that is handled automatically
+        This should return an elasticsearch-DSL Search instance, list or
+        queryset based on the values in self.cleaned_data.
         """
-        raise NotImplementedError("You must implement the search method!")
+        results = self.index.objects.all()
+        # reduce the results based on the q field
+        if self.cleaned_data.get("q"):
+            results = results.query(
+                "multi_match",
+                query=self.cleaned_data['q'],
+                fields=['*'],
+                # this prevents ES from erroring out when a string is used on a
+                # number field (for example)
+                lenient=True
+            )
 
-    def queryset(self):
+        return results
+
+    def get_queryset(self):
         """
-        This should return the list of objects when a search is not performed.
+        This should return the queryset of objects when a search is not performed.
         It also serves to filter out search results which are not part of this
         set
         """
-        raise NotImplementedError("You must implement the queryset method!")
+        return self.index.objects.get_queryset()
 
     def results(self):
         """
-        This returns the DB objects that matches the search
+        This either returns self.get_queryset(), self.search(), or
+        self.search() wrapped up in a Pageable.
         """
         if not self.in_search_mode():
-            return self.queryset()
+            return self.get_queryset()
 
         # we are doing a search
         objects = self.search()
-        # reduce the results based on the q field
-        if self.cleaned_data.get("q"):
-            objects = objects.query(content__match=self.cleaned_data['q'])
 
-        # get ALL the pk values for the matches. If objects isn't an S
-        # instance, then we just return all the objects, since we can't really
-        # do anything with it. That handles the case where the search method
-        # returns a queryset or list for example.
-        if isinstance(objects, S):
-            pks = objects.values_list("pk").everything()
-        else:
+        # if objects isn't a Search object, just return it, since it's
+        # (hopefully) just a list or queryset.
+        if not isinstance(objects, Search):
             return objects
-        # Create a mapping that maps a pk, to the position the object should
-        # appear in a list. This allows us to order things by relevance.
-        # The [0][0] index is used because ES (for some reason) turns fields
-        # into lists when you use the `fields` clause on the query, which
-        # implicitly happens when we used the .values_list method
-        pk_lookup = dict((int(pk[0][0]), i) for i, pk in enumerate(pks))
-        objects = self.queryset().filter(pk__in=pk_lookup.keys())
-        # we need to sort the objects based on the order they were returned
-        # by elasticsearch
-        if self.sort_by_relevance:
-            objects = sorted(objects, key=lambda item: pk_lookup[item.pk])
 
-        return objects
+        # convert the search results to something that can be iterated over, and paged
+        return Pageable(objects, self.get_queryset())
 
 
-class PaginateMixin(object):
+class SearchForm(BaseSearchForm):
     """
-    Paginates the results of the BaseSearchForm.results()
+    Paginates the results of the BaseSearchForm.results(), and pre-filters the
+    Search object based on the results of self.get_queryset(), which makes
+    pagination reliable
     """
-    def results(self, page):
-        objects = super(PaginateMixin, self).results()
-        paginator = Paginator(objects, settings.ITEMS_PER_PAGE)
+    def search(self):
+        # this is horribly inefficent, but the only way we can guarantee all the
+        # results we get back are in the queryset.
+        return super().search().filter("ids", values=[int(val) for val in self.get_queryset().values_list('pk', flat=True)])
+
+    def results(self, page, items_per_page=getattr(settings, "ITEMS_PER_PAGE", 100)):
+        objects = super().results()
+
+        paginator = Paginator(objects, items_per_page)
         try:
             a_page = paginator.page(page)
         except PageNotAnInteger:
@@ -107,5 +113,34 @@ class PaginateMixin(object):
         return a_page
 
 
-class SearchForm(PaginateMixin, BaseSearchForm):
-    pass
+class Pageable:
+    """
+    wrap up the elasticsearch-dsl Search instance in something that we
+    can use in a Paginator, and iterate over, which returns model
+    objects
+
+    USING PAGINATION WITH THIS CLASS IS NOT RELIABLE, *unless* you prefiltered
+    self.search with the PKs in self.queryset. If you didn't, then count()
+    could include items that aren't in the queryset anymore (for example, if
+    you deleted things from the database, but not from ES).
+    """
+    def __init__(self, search, queryset):
+        self.search = search
+        self.queryset = queryset
+
+    def count(self):
+        return self.search.count()
+
+    def __iter__(self):
+        return iter(self[0:10])
+
+    def __getitem__(self, key):
+        results = list(self.search[key].execute())
+        pk_to_model = dict((str(row.pk), row) for row in self.queryset.filter(pk__in=[result._meta.id for result in results]))
+        # we need to return the model objects in the order they were retrieved
+        # from ES
+        to_return = []
+        for result in results:
+            if result._meta.id in pk_to_model:
+                to_return.append(pk_to_model[result._meta.id])
+        return to_return
