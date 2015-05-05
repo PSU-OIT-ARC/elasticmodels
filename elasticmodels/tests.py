@@ -140,6 +140,9 @@ class ListFieldTest(TestCase):
 
             search = CarIndex()
 
+        # need to call this manually since AppConfig.prepare doesn't run
+        Car.search.construct()
+
         self.assertEqual("colors", Car.search.fields[0].name)
 
     def test_get_mapping(self):
@@ -216,6 +219,8 @@ class IndexTest(ESTest):
 
         self.CarIndex = CarIndex
         self.Car = Car
+        # we need to call this manually since AppConfig.ready doesn't run
+        Car.search.construct()
 
     def test_model_class_added(self):
         self.assertEqual(self.Car.search.model, self.Car)
@@ -244,6 +249,9 @@ class IndexTest(ESTest):
                 name = models.CharField(max_length=255)
 
                 search = CarIndex()
+
+            # need to call this manually since AppConfig.prepare doesn't run
+            Car.search.construct()
 
     def test_mapping(self):
         self.assertEqual(self.Car.search.get_mapping(), {
@@ -443,6 +451,10 @@ class SuspendedUpdatesTest(ESTest):
             name = models.CharField(max_length=255)
             search = CarIndex()
 
+
+        # need to call this manually since AppConfig.prepare doesn't run
+        Car.search.construct()
+
         Car.search.put_mapping()
 
         with suspended_updates():
@@ -476,6 +488,9 @@ class ReceiverTest(ESTest):
 
         with connection.schema_editor() as editor:
             editor.create_model(Car)
+
+        # need to call this manually since AppConfig.prepare doesn't run
+        Car.search.construct()
 
         car = prepare(Car)
         # this should add the model to ES

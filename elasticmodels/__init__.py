@@ -1,5 +1,3 @@
-# these need to be imported so they get called
-from .receivers import update_indexes, delete_from_indexes  # noqa
 # these are just convenience imports
 from .indexes import Index, suspended_updates  # noqa
 from .fields import (  # noqa
@@ -17,3 +15,5 @@ from .fields import (  # noqa
     NestedField,
     ListField,
 )
+
+default_app_config = 'elasticmodels.apps.ElasticmodelsConfig'
