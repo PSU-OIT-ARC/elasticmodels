@@ -33,7 +33,7 @@ class TypedField(BaseField):
 
         # this is the name to be used for the ES field. If the attr parameter
         # was empty, then the `name` property should be set later
-        self._name = self.path[-1] if self.path else None
+        super().__init__(self.path[-1] if self.path else None)
 
     @property
     def name(self):
@@ -49,8 +49,8 @@ class TypedField(BaseField):
         self._name = value
         # if the path hasn't been set to anything useful, make it the same as
         # the name field
-        if self.path == []:
-            self.path.append(value)
+        if value and self.path == []:
+            self.path = [value]
 
         return self._name
 
