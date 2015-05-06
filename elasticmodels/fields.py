@@ -178,8 +178,19 @@ class NestedField(ObjectField):
 
 class ListField(BaseField):
     def __init__(self, field):
-        super().__init__()
+        if inspect.isclass(field) and issubclass(field, BaseField):
+            field = field()
+
         self.field = field
+        super().__init__()
+
+    @property
+    def name(self):
+        return self.field.name
+
+    @name.setter
+    def name(self, value):
+        self.field.name = value
 
     def get_mapping(self):
         return self.field.get_mapping()
