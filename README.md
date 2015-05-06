@@ -158,7 +158,7 @@ Of course, we need to rebuild the index `./manage.py rebuild_index` after we
 make a change like this.
 
 Now when a Car is saved, to determine the value to use for the "type" field, it
-looks up the attribute "type_to_string", sees that its callable, and calls it
+looks up the attribute "type_to_string", sees that it's callable, and calls it
 (instead of just accessing `model_instance.type` directly).
 
 ## Using NestedField and ObjectField
@@ -318,7 +318,7 @@ instance or class.
         # the ELASTICSEARCH_CONNECTIONS connection to use for this index
         using = "default"
         # the ES dynamic property to use for the mapping
-        dynamic = "string"
+        dynamic = "strict"
         # the field to use for management commands when using the `--start` and
         # `--end` options. The default is None.
         date_field = "modified_on"
