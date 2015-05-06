@@ -318,8 +318,13 @@ class Index(metaclass=IndexBase):
         Create the index and mapping in ES
         """
         es = self.es
+        body = {}
+        index_settings = settings.ELASTICSEARCH_CONNECTIONS[self._meta.using].get("SETTINGS", None)
+        if index_settings:
+            body['settings'] = index_settings
+
         try:
-            es.indices.create(index=self.index)
+            es.indices.create(index=self.index, body=body)
         except elasticsearch.exceptions.RequestError as e:
             if "IndexAlreadyExistsException" not in str(e):
                 raise

@@ -22,6 +22,28 @@ ELASTICSEARCH_CONNECTIONS = {
     'fish': {
         'HOSTS': ['http://example.com:9200',],
         'INDEX_NAME': 'fish',
+        'SETTINGS': {
+            "analysis": {
+                "analyzer": {
+                    "underscored_snowball": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": [
+                            "standard",
+                            "underscore",
+                            "lowercase",
+                            "snowball"
+                        ]
+                    }
+                },
+                "filter": {
+                    "underscore": {
+                        "type": "pattern_capture",
+                        "patterns": ["([^_]+)"]
+                    }
+                }
+            }
+        }
     }
 }
 ```
