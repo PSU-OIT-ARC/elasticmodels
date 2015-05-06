@@ -178,11 +178,15 @@ class NestedField(ObjectField):
 
 class ListField(BaseField):
     def __init__(self, field):
+        # instantiate the field if we got passed a class
         if inspect.isclass(field) and issubclass(field, BaseField):
             field = field()
 
+        # we need to set the field *before* we call the superclass, since the
+        # superclass calls self.name, and our implementation of the name
+        # property sets self.field.name
         self.field = field
-        super().__init__()
+        super().__init__(self.field.name)
 
     @property
     def name(self):

@@ -146,10 +146,19 @@ class ListFieldTest(TestCase):
         self.assertEqual("colors", Car.search.fields[0].name)
 
     def test_get_mapping(self):
-        field = ListField(StringField("foo"))
+        field = ListField(StringField(attr="foo.bar"))
         self.assertEqual({
             "type": "string",
         }, field.get_mapping())
+
+    def test_properties(self):
+        field = ListField(StringField(attr="foo.bar"))
+        self.assertEqual(field.field.path, ["foo", "bar"])
+        self.assertEqual(field.name, "bar")
+        # if I change the name on the list field, it should propagate to the
+        # child field
+        field.name = "asdf"
+        self.assertEqual(field.field.name, "asdf")
 
     def test_get_from_instance(self):
         d = Dummy()
