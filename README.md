@@ -5,7 +5,8 @@ elasticsearch.
 # Features:
 - Management commands (rebuild_index and update_index, clear_index)
 - Django signal receivers on save and delete for keeping ES in sync
-- Complex field type support (ObjectField, NestedField, ListField)
+- Complex field type support (Object, Nested, List)
+- Based of the features of elasticsearch-dsl
 
 # Quick Start:
 Add ‘elasticmodels’ to INSTALLED_APPS
@@ -16,34 +17,12 @@ For example:
 ```python
 ELASTICSEARCH_CONNECTIONS = {
     'default': {
-        'HOSTS': ['http://localhost:9200',],
-        'INDEX_NAME': 'my_index',
+        'hosts': ['http://localhost:9200',],
+        'index_name': 'my_index',
     }
     'fish': {
-        'HOSTS': ['http://example.com:9200',],
-        'INDEX_NAME': 'fish',
-        'SETTINGS': {
-            "analysis": {
-                "analyzer": {
-                    "underscored_snowball": {
-                        "type": "custom",
-                        "tokenizer": "standard",
-                        "filter": [
-                            "standard",
-                            "underscore",
-                            "lowercase",
-                            "snowball"
-                        ]
-                    }
-                },
-                "filter": {
-                    "underscore": {
-                        "type": "pattern_capture",
-                        "patterns": ["([^_]+)"]
-                    }
-                }
-            }
-        }
+        'hosts': ['http://example.com:9200',],
+        'index_name': 'fish',
     }
 }
 ```
@@ -66,25 +45,19 @@ To make this model work with Elasticsearch, create a subclass of
 `elasticmodels.Index`:
 
 ```python
-from elasticmodels import Index, StringField, IntegerField, NestedField
+from elasticmodels import Index, String, Integer, Nested
+from .models import Car
+
 
 class CarIndex(Index):
     class Meta:
+        model = Car
         fields = [
             'license',
             'color',
             'description',
             'type',
         ]
-```
-
-Back on the Model class, add the CarIndex like you would a manager:
-
-```python
-class Car(models.Model):
-    # ... #
-
-    search = CarIndex()
 ```
 
 Elasticmodels will automatically setup a mapping in Elasticsearch for the Car
@@ -104,15 +77,13 @@ Now, when you do something like:
 The object will be saved in Elasticsearch too (using a signal handler). To get a pre-filtered
 Elasticsearch-DSL Search instance, use:
 
-    Car.search.all()
+    CarIndex.objects.all()
 
     # or
-    Car.search.filter("term", color="red")
-    # which is just a shortcut for Car.search.all().filter()
+    CarIndex.objects.filter("term", color="red")
 
     # or
-    Car.search.query("match", description="beautiful")
-    # which is just a shortcut for Car.search.all().query()
+    CarIndex.objects.query("match", description="beautiful")
 
 The return value of these method calls is an Elasticsearch-DSL instance.
 
@@ -143,9 +114,10 @@ like this:
 class CarIndex(Index):
     # add a string field to the Elasticsearch mapping called type, the value of
     # which is derived from the model's type_to_string attribute
-    type = StringField(attr="type_to_string")
+    type = String(attr="type_to_string")
 
     class Meta:
+        model = Car
         # we removed the type field from here
         fields = [
             'license',
@@ -161,7 +133,7 @@ Now when a Car is saved, to determine the value to use for the "type" field, it
 looks up the attribute "type_to_string", sees that it's callable, and calls it
 (instead of just accessing `model_instance.type` directly).
 
-## Using NestedField and ObjectField
+## Using Nested and Object Fields
 
 Elasticsearch supports object and nested field types. So does Elasticmodels.
 
@@ -184,14 +156,15 @@ to ES.
 
 ```python
 class CarIndex(Index):
-    type = StringField(attr="type_to_string")
+    type = String(attr="type_to_string")
 
-    extra_data = NestedField(properties={
-        "a_key": StringField,
-        "number": IntegerField(attr="another_key")
+    extra_data = Nested(properties={
+        "a_key": String(),
+        "number": Integer(attr="another_key")
     })
 
     class Meta:
+        model = Car
         fields = [
             'license',
             'color',
@@ -213,7 +186,7 @@ needs to be saved.
 class CarIndex(Index):
     # ... #
 
-    foo = StringField()
+    foo = String()
 
     def prepare_foo(self, instance):
         return " ".join(instance.foos)
@@ -287,24 +260,24 @@ created.**
 
 ## Simple Fields
 
-- StringField(attr=None, \*\*elasticsearch_properties)
-- FloatField(attr=None, \*\*elasticsearch_properties)
-- DoubleField(attr=None, \*\*elasticsearch_properties)
-- ByteField(attr=None, \*\*elasticsearch_properties)
-- ShortField(attr=None, \*\*elasticsearch_properties)
-- IntegerField(attr=None, \*\*elasticsearch_properties)
-- DateField(attr=None, \*\*elasticsearch_properties)
-- BooleanField(attr=None, \*\*elasticsearch_properties)
+- String(attr=None, \*\*elasticsearch_properties)
+- Float(attr=None, \*\*elasticsearch_properties)
+- Double(attr=None, \*\*elasticsearch_properties)
+- Byte(attr=None, \*\*elasticsearch_properties)
+- Short(attr=None, \*\*elasticsearch_properties)
+- Integer(attr=None, \*\*elasticsearch_properties)
+- Date(attr=None, \*\*elasticsearch_properties)
+- Boolean(attr=None, \*\*elasticsearch_properties)
 
 ## Complex Fields
 
 `properties` is a dict where the key is a field name, and the value is a field
 instance or class.
 
-- TemplateField(template_name, \*\*elasticsearch_properties)
-- ObjectField(properties, attr=None, \*\*elasticsearch_properties)
-- NestedField(properties, attr=None, \*\*elasticsearch_properties)
-- ListField(field)
+- Template(template_name, \*\*elasticsearch_properties)
+- Object(properties, attr=None, \*\*elasticsearch_properties)
+- Nested(properties, attr=None, \*\*elasticsearch_properties)
+- List(field)
 
 # Index Meta Options
 
@@ -318,7 +291,7 @@ instance or class.
         # the ELASTICSEARCH_CONNECTIONS connection to use for this index
         using = "default"
         # the ES dynamic property to use for the mapping
-        dynamic = "strict"
+        # dynamic = "strict" <-- This isn't supported by elaticsearch DSL yet
         # the field to use for management commands when using the `--start` and
         # `--end` options. The default is None.
         date_field = "modified_on"

@@ -6,10 +6,6 @@ class VariableLookupError(ElasticModelsError):
     pass
 
 
-class UndefinedFieldNameError(ElasticModelsError):
-    pass
-
-
 class RedeclaredFieldError(ElasticModelsError):
     pass
 

@@ -1,65 +1,19 @@
-import copy
-import inspect
+from types import MethodType
+from elasticsearch_dsl.field import Object, Nested, Date, String, FIELDS, Field
+from elasticsearch_dsl.utils import _make_dsl_class
 from django.template.loader import render_to_string
-
-from .exceptions import VariableLookupError, UndefinedFieldNameError
-
-class BaseField:
-    def __init__(self, name=None):
-        self.name = name
-
-    def get_mapping(self):
-        raise NotImplementedError
-
-    def get_from_instance(self, instance):
-        raise NotImplementedError
+from .exceptions import VariableLookupError
 
 
-class TypedField(BaseField):
-    # `type` is the Elasticsearch field type used when a mapping if created with
-    #  this field
-    type = "string"
-
+class EMField(Field):
     def __init__(self, attr=None, **kwargs):
+        super().__init__(**kwargs)
         # `self.path` is a list of attributes to lookup on a model instance to
         # generate the value for this field when it is going to index a model
         # object. For example, a path of ['foo', 'bar'] would get the value of
         # model_instance.foo.bar. We generate the list based on the attr
         # parameter, which can be a dotted string "path" like "foo.bar"
-        self.path = attr.split(".") if attr else []
-        # options is passed on as is to ES when a mapping is generated
-        self.options = copy.copy(kwargs)
-        self.options['type'] = self.type
-
-        # this is the name to be used for the ES field. If the attr parameter
-        # was empty, then the `name` property should be set later
-        super().__init__(self.path[-1] if self.path else None)
-
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, value):
-        """
-        Update the `_name` variable and the `path` if necessary. This property
-        will be set by IndexBase when it is updating fields that were defined
-        as class attributes on a subclass of `Index`
-        """
-        self._name = value
-        # if the path hasn't been set to anything useful, make it the same as
-        # the name field
-        if value and self.path == []:
-            self.path = [value]
-
-        return self._name
-
-    def get_mapping(self):
-        """A hook to provide customization of the mapping."""
-        if not self.name:
-            raise UndefinedFieldNameError("Name for field not defined yet!")
-
-        return self.options
+        self._path = attr.split(".") if attr else []
 
     def get_from_instance(self, instance):
         """
@@ -69,7 +23,7 @@ class TypedField(BaseField):
         # walk the attribute path to get the value. Similarly to Django, first
         # try getting the value from a dict, then as a attribute lookup, and
         # then as a list index
-        for attr in self.path:
+        for attr in self._path:
             try: # dict lookup
                 instance = instance[attr]
             except (TypeError, AttributeError, KeyError, ValueError, IndexError):
@@ -90,115 +44,71 @@ class TypedField(BaseField):
         return instance
 
 
-class StringField(TypedField):
-    type = "string"
+class String(EMField, String):
+    pass
 
 
-class FloatField(TypedField):
-    type = "float"
-
-
-class DoubleField(TypedField):
-    type = "double"
-
-
-class ByteField(TypedField):
-    type = "byte"
-
-
-class ShortField(TypedField):
-    type = "short"
-
-
-class IntegerField(TypedField):
-    type = "integer"
-
-
-class LongField(TypedField):
-    type = "long"
-
-
-class DateField(TypedField):
-    type = "date"
-
-
-class BooleanField(TypedField):
-    type = "boolean"
-
-
-class TemplateField(TypedField):
-    type = "string"
-
-    def __init__(self, template_name, **kwargs):
-        self.template_name = template_name
-        super().__init__(**kwargs)
-
-    def get_from_instance(self, instance):
-        context = {'object': instance}
-        return render_to_string(self.template_name, context)
-
-
-class ObjectField(TypedField):
-    type = "object"
-
-    def __init__(self, *args, properties, **kwargs):
-        super().__init__(*args, properties=properties, **kwargs)
-        # from the properties argument, generate the subfields
-        self.fields = []
-        for name, field in properties.items():
-            if isinstance(field, BaseField):
-                # the name should be set to the key, so the
-                # user doesn't have to redundantly specify the
-                # name
-                field.name = name
-            elif inspect.isclass(field) and issubclass(field, BaseField):
-                field = field(attr=name)
-
-            self.fields.append(field)
-
+class Object(EMField, Object):
     def get_from_instance(self, instance):
         obj = super().get_from_instance(instance)
         data = {}
 
-        for field in self.fields:
-            data[field.name] = field.get_from_instance(obj)
+        for name, field in self.properties.to_dict().items():
+            if not isinstance(field, EMField):
+                continue
+
+            # if the field's path hasn't been set to anything useful, set it to
+            # the name of the field
+            if field._path == []:
+                field._path = [name]
+
+            data[name] = field.get_from_instance(obj)
 
         return data
 
-    def get_mapping(self):
-        mapping = super().get_mapping()
-        for field in self.fields:
-            mapping['properties'][field.name] = field.get_mapping()
-        return mapping
+
+class Nested(Object, Nested):
+    pass
 
 
-class NestedField(ObjectField):
-    type = "nested"
+class Date(EMField, Date):
+    pass
 
 
-class ListField(BaseField):
-    def __init__(self, field):
-        # instantiate the field if we got passed a class
-        if inspect.isclass(field) and issubclass(field, BaseField):
-            field = field()
-
-        # we need to set the field *before* we call the superclass, since the
-        # superclass calls self.name, and our implementation of the name
-        # property sets self.field.name
-        self.field = field
-        super().__init__(self.field.name)
-
-    @property
-    def name(self):
-        return self.field.name
-
-    @name.setter
-    def name(self, value):
-        self.field.name = value
-
-    def get_mapping(self):
-        return self.field.get_mapping()
+def List(field):
+    """
+    This wraps a field so that when get_from_instance is called, the field's
+    values are iterated over
+    """
+    # alter the original field's get_from_instance so it iterates over the
+    # values that the field's get_from_instance() method returns
+    original_get_from_instance = field.get_from_instance
 
     def get_from_instance(self, instance):
-        for value in self.field.get_from_instance(instance):
+        for value in original_get_from_instance(instance):
             yield value
+
+    field.get_from_instance = MethodType(get_from_instance, field)
+    # this is hacky, but the __setattr__ on DslBase which Field is a subclass
+    # of adds every attribute to _params. This creates infinite recurision when
+    # to_dict() is called, which is obviously a problem. So we remove the
+    # method from _params
+    field._params.pop("get_from_instance")
+
+    return field
+
+
+class Template(String):
+    def __init__(self, template_name, **kwargs):
+        self._template_name = template_name
+        super().__init__(**kwargs)
+
+    def get_from_instance(self, instance):
+        context = {'object': instance}
+        return render_to_string(self._template_name, context)
+
+
+# take all the basic fields from elasticsearch-dsl, and make them subclass EMField
+for f in FIELDS:
+    fclass = _make_dsl_class(EMField, f)
+    globals()[fclass.__name__] = fclass

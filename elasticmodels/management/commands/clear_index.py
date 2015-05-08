@@ -31,6 +31,6 @@ class Command(BaseCommand):
         for using in usings:
             for model in models:
                 for index in registry.indexes_for_model(model):
-                    if index._meta.using == using:
+                    if index._doc_type.using == using:
                         self.stdout.write("Deleting %s" % index)
                         index.delete_mapping()

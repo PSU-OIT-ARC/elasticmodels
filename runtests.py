@@ -20,8 +20,8 @@ settings.configure(
     MIDDLEWARE_CLASSES=[],
     ELASTICSEARCH_CONNECTIONS={
         'default': {
-            'HOSTS': ['http://localhost:9200'],
-            'INDEX_NAME': 'elasticmodels-unit-test-db',
+            'hosts': ['http://localhost:9200'],
+            'index_name': 'elasticmodels-unit-test-db',
         }
     },
     USE_TZ=True,

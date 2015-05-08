@@ -1,47 +1,33 @@
-import threading
-from itertools import chain
+import copy
+from collections import defaultdict
 from contextlib import contextmanager
+from itertools import chain
+import threading
 
+from six import add_metaclass
+from django.db import models
 import elasticsearch
 from elasticsearch.helpers import bulk
-import elasticsearch_dsl as dsl
-from collections import defaultdict
+from elasticsearch_dsl.connections import connections
+from elasticsearch_dsl.document import DocTypeMeta
+from elasticsearch_dsl.field import Field
+from elasticsearch_dsl import DocType
 
-from django.conf import settings
-from django.db import models
-from .fields import (
-    BaseField, StringField, DoubleField, ShortField, IntegerField, LongField, DateField, BooleanField
-)
-from .connections import setup_connections
 from .exceptions import RedeclaredFieldError, ModelFieldNotMappedError
+from .fields import (
+    EMField,
+    String,
+    Double,
+    Short,
+    Integer,
+    Long,
+    Date,
+    Boolean,
+)
 
 
 # this allows us to queue up index updates (in a thread safe manner)
 local_storage = threading.local()
-
-model_field_class_to_field_class = {
-    models.AutoField: IntegerField,
-    models.BigIntegerField: LongField,
-    models.BooleanField: BooleanField,
-    models.CharField: StringField,
-    models.DateField: DateField,
-    models.DateTimeField: DateField,
-    models.EmailField: StringField,
-    models.FileField: StringField,
-    models.FilePathField: StringField,
-    # python's float has the same precision as Java's double
-    models.FloatField: DoubleField,
-    models.ImageField: StringField,
-    models.IntegerField: IntegerField,
-    models.NullBooleanField: BooleanField,
-    models.PositiveIntegerField: IntegerField,
-    models.PositiveSmallIntegerField: ShortField,
-    models.SlugField: StringField,
-    models.SmallIntegerField: ShortField,
-    models.TextField: StringField,
-    models.TimeField: LongField,
-    models.URLField: StringField,
-}
 
 
 class IndexRegistry:
@@ -52,10 +38,21 @@ class IndexRegistry:
     """
     def __init__(self):
         self.model_to_indexes = defaultdict(set)
+        self.connected = False
 
     def register(self, model, index):
         """Register the model with the registry"""
         self.model_to_indexes[model].add(index)
+        if not self.connected:
+            connections.index_name = {}
+            from django.conf import settings
+            kwargs = {}
+            for name, params in settings.ELASTICSEARCH_CONNECTIONS.items():
+                params = copy.deepcopy(params)
+                kwargs[name] = params
+                connections.index_name[name] = params.pop("index_name")
+            connections.configure(**kwargs)
+            self.connected = True
 
     def update(self, instance, **kwargs):
         """
@@ -63,7 +60,7 @@ class IndexRegistry:
         ignore_signals flag allows it)
         """
         for index in self.model_to_indexes[instance.__class__]:
-            if not index.ignore_signals:
+            if not index._doc_type.ignore_signals:
                 index.update(instance, **kwargs)
 
     def delete(self, instance, **kwargs):
@@ -71,6 +68,9 @@ class IndexRegistry:
         Delete the object from all its indexes (with ignore_signals=False)
         """
         self.update(instance, action="delete", **kwargs)
+
+    def get_indexes(self):
+        return set(chain(*self.model_to_indexes.values()))
 
     def get_models(self):
         return self.model_to_indexes.keys()
@@ -104,166 +104,132 @@ def suspended_updates():
         local_storage.bulk_queue = None
 
 
-class IndexOptions:
+model_field_class_to_field_class = {
+    models.AutoField: Integer,
+    models.BigIntegerField: Long,
+    models.BooleanField: Boolean,
+    models.CharField: String,
+    models.DateField: Date,
+    models.DateTimeField: Date,
+    models.EmailField: String,
+    models.FileField: String,
+    models.FilePathField: String,
+    # python's float has the same precision as Java's double
+    models.FloatField: Double,
+    models.ImageField: String,
+    models.IntegerField: Integer,
+    models.NullBooleanField: Boolean,
+    models.PositiveIntegerField: Integer,
+    models.PositiveSmallIntegerField: Short,
+    models.SlugField: String,
+    models.SmallIntegerField: Short,
+    models.TextField: String,
+    models.TimeField: Long,
+    models.URLField: String,
+}
+
+
+class DocTypeProxy(object):
     """
-    This is a simple container for the attributes defined on an Index
-    subclass's Meta inner-class. This state is shared between all instances of
-    an Index, and should be considered immutable!
+    We want to easily expose the my_index.objects.search().query() and filter()
+    methods without having to call search(). So this proxy object exposes those
+    methods
     """
-    def __init__(self, cls, class_fields=()):
-        # these are the model field names used on the "fields" attribute of the
-        # Index.Meta class
-        self.model_field_names = tuple(getattr(cls, "fields", []))
-        # this stores the actual Field instances for all the fields declared on
-        # the Index subclass
-        self.class_fields = tuple(class_fields)
-        self.doc_type = getattr(cls, "doc_type", None)
-        # which elasticsearch connection to use
-        self.using = getattr(cls, "using", "default")
-        # http://www.elastic.co/guide/en/elasticsearch/guide/master/dynamic-mapping.html
-        self.dynamic = getattr(cls, "dynamic", "strict")
-        # the field to use in generating a queryset to index
-        self.date_field = getattr(cls, "date_field", None)
+    def __init__(self, index):
+        self.index = index
+
+    def filter(self, *args, **kwargs):
+        return self.index.search().filter(*args, **kwargs)
+
+    def query(self, *args, **kwargs):
+        return self.index.search().query(*args, **kwargs)
+
+    def all(self):
+        return self.index.search()
+
+    def __getattr__(self, key):
+        return getattr(self.index, key)
 
 
-class IndexDescriptor:
-    # This class ensures the Index isn't accessible via model instances.
-    # For example, Poll.search works, but poll_obj.search raises AttributeError.
-    def __init__(self, manager):
-        self.manager = manager
-
-    def __get__(self, instance, type=None):
-        if instance is not None:
-            raise AttributeError("Index isn't accessible via %s instances" % type.__name__)
-
-        return self.manager
-
-
-class IndexBase(type):
-    """
-    This metaclass constructs a subclass of Index with the Meta class removed
-    and replaced with _meta (of type IndexOptions). It handles initalizing all
-    the fields defined as class attributes.
-    """
+class EMDocTypeMeta(DocTypeMeta):
     def __new__(cls, name, bases, attrs):
-        super_new = super(IndexBase, cls).__new__
+        super_new = super(EMDocTypeMeta, cls).__new__
 
-        # ensure initialization is only performed for subclasses of Index
-        # (excluding the Index class itself).
-        parents = [b for b in bases if isinstance(b, IndexBase)]
+        # skip the stuff initialization stuff below for this class itself
+        parents = [b for b in bases if isinstance(b, EMDocTypeMeta)]
         if not parents:
             return super_new(cls, name, bases, attrs)
 
-        # loop through the fields attached to the Index class, add'em to the
-        # _meta instance, and update them with the proper field name
-        class_fields = []
-        for field_name, field_instance in [(a, b) for a, b in attrs.items()]:
-            if not isinstance(field_instance, BaseField):
-                continue
+        # to avoid naming a field in Meta.fields and as a class attribute, we
+        # generate a set of the field names that are being used
+        class_fields = set(name for name, field in attrs.items() if isinstance(field, Field))
 
-            class_fields.append(field_instance)
-            # update the name and path if they weren't specified
-            if not field_instance.name:
-                field_instance.name = field_name
+        # copy all our extra attributes from the meta class, since the
+        # superclass will discard them
+        model = attrs['Meta'].model
+        model_field_names = getattr(attrs['Meta'], "fields", [])
+        date_field = getattr(attrs['Meta'], "date_field", None)
+        ignore_signals = getattr(attrs['Meta'], "ignore_signals", False)
 
-            # remove the field from the class
-            attrs.pop(field_name)
+        cls = super_new(cls, name, bases, attrs)
 
-        # construct our own fancy meta instance based on the Index's Meta class
-        meta = IndexOptions(attrs.pop("Meta", object), class_fields=class_fields)
+        # tack on our extra attributes
+        cls._doc_type.model = model
+        cls._doc_type.date_field = date_field
+        cls._doc_type.ignore_signals = ignore_signals
 
-        new_class = super_new(cls, name, bases, attrs)
-        setattr(new_class, "_meta", meta)
+        # to match Django's API for models, add a class attribute called
+        # "objects" that exposes the query() and filter() methods
+        cls.objects = DocTypeProxy(cls())
+        # Registering the index has the side effect of setting up the ES
+        # connections, which populates the index_name attribute on
+        # `connections`. That allows us to tack on the index name to the
+        # doc_type
+        registry.register(model, cls.objects)
+        cls._doc_type.index = connections.index_name[cls._doc_type.using]
 
-        return new_class
-
-
-class Index(metaclass=IndexBase):
-    """
-    This class works similarly to a Model, Manager, Queryset
-    and ModelForm (crazy, I know). The README explains its usage.
-    """
-    def __init__(self, ignore_signals=False):
-        # indicates if the this class has been fully constructed
-        self._constructed = False
-
-        # indicates if the update_search_index receiver should update this
-        # index automatically when a model instance is saved
-        self.ignore_signals = ignore_signals
-
-        # ensure the elasticsearch connections are loaded
-        setup_connections()
-
-        self.es = settings.ELASTICSEARCH_CONNECTIONS[self._meta.using]['connection']
-        self.index = settings.ELASTICSEARCH_CONNECTIONS[self._meta.using]['INDEX_NAME']
-        # this is set in construct()
-        self.search = None
-        self.model = None
-        self.fields = []
-
-    def contribute_to_class(self, model_class, field_name):
-        """
-        This is called by the model metaclass and allows us to get a
-        reference to the model constructing this Index subclass instance
-        """
-        setattr(model_class, field_name, IndexDescriptor(self))
-        self.model = model_class
-
-        registry.register(model_class, self)
-
-    def construct(self):
-        """
-        This is called by a receiver when the model is done being defined. At
-        this point in the program, we can access the model._meta fields, so we
-        can finish our initialization
-        """
-        if self._constructed:
-            return
-
-        self._constructed = True
-
-        # populate the fields list. Start off with a copy of the fields defined
-        # on the Meta class
-        self.fields = [field for field in self._meta.class_fields]
         # create a lookup lookup table for the model fields, and then construct
         # an elasticsearch field based on the type
-        try:
-            fields = self.model._meta.get_fields()
-        except AttributeError:
-            fields = self.model._meta.fields
+        fields = model._meta.fields
         fields_lookup = dict((field.name, field) for field in fields)
-        for field_name in self._meta.model_field_names:
-            field_instance = self.to_field(field_name, fields_lookup[field_name])
-            self.fields.append(field_instance)
 
-        # check for duplicate field names
-        names = set()
-        for field in self.fields:
-            if field.name in names:
-                raise RedeclaredFieldError("You cannot redeclare the field named '%s' on %s" % (field.name, self.__class__.__name__))
-            names.add(field.name)
+        # tack on all the fields that were listed in Meta.fields
+        for field_name in model_field_names:
+            # this field name is already in use
+            if field_name in class_fields:
+                raise RedeclaredFieldError("You cannot redeclare the field named '%s' on %s" % (field_name, cls.__name__))
 
-        # set the doc_type
-        if self._meta.doc_type is None:
-            self.doc_type = "%s_%s" % (self.model._meta.app_label, self.model._meta.model_name)
-        else:
-            self.doc_type = self._meta.doc_type
+            field_instance = cls.objects.to_field(field_name, fields_lookup[field_name])
+            cls._doc_type.mapping.field(field_name, field_instance)
 
-        # setup an ES to use.
-        self.search = self.get_search()
+        return cls
+
+
+@add_metaclass(EMDocTypeMeta)
+class Index(DocType):
+    # we need to provide these methods so the index registry works
+    def __eq__(self, other):
+        return id(self) == id(other)
+
+    def __hash__(self):
+        return id(self)
+
+    @property
+    def es(self):
+        return connections.get_connection(self._doc_type.using)
 
     def get_queryset(self, start=None, end=None):
         """
         Return the queryset that should be indexed by this.
         """
-        qs = self.model._default_manager
+        qs = self._doc_type.model._default_manager
         filters = {}
 
-        if self._meta.date_field:
+        if self._doc_type.date_field:
             if start:
-                filters["%s__gte" % self._meta.date_field] = start
+                filters["%s__gte" % self._doc_type.date_field] = start
             if end:
-                filters["%s__lte" % self._meta.date_field] = end
+                filters["%s__lte" % self._doc_type.date_field] = end
 
         qs = qs.filter(**filters)
 
@@ -275,22 +241,24 @@ class Index(metaclass=IndexBase):
         based on the fields defined on this Index subclass
         """
         data = {}
-        for field in self.fields:
+        # There should be an easier way to get at the mapping's field instances...
+        for name, field in self._doc_type.mapping.properties.properties.to_dict().items():
+            if not isinstance(field, EMField):
+                continue
+
+            # if the field's path hasn't been set to anything useful, set it to
+            # the name of the field
+            if field._path == []:
+                field._path = [name]
             # a hook is provided, similar to a Django Form clean_* method that
             # can override the get_from_instance() behavior of the elasticmodels field type.
             # If a method on this class is called prepare_{field_name}
             # where {field_name} is the name of a field on the Index, it is
             # called *instead* of get_from_instance.
-            prep_func = getattr(self, "prepare_" + field.name, field.get_from_instance)
-            data[field.name] = prep_func(instance)
-        return data
+            prep_func = getattr(self, "prepare_" + name, field.get_from_instance)
+            data[name] = prep_func(instance)
 
-    def get_search(self):
-        """Create the elasticsearch DSL instance"""
-        s = dsl.Search(using=self.es, index=self.index, doc_type=self.doc_type)
-        s = s.index(self.index)
-        s = s.doc_type(self.doc_type)
-        return s
+        return data
 
     def to_field(self, field_name, model_field):
         """
@@ -302,57 +270,6 @@ class Index(metaclass=IndexBase):
             return model_field_class_to_field_class[model_field.__class__](attr=field_name)
         except KeyError:
             raise ModelFieldNotMappedError("Cannot convert model field %s to an Elasticsearch field!" % field_name)
-
-    def get_mapping(self):
-        """
-        Returns a dict representing this Index as an ES mapping
-        """
-        properties = dict((field.name, field.get_mapping()) for field in self.fields)
-        return {
-            'dynamic': self._meta.dynamic,
-            'properties': properties
-        }
-
-    def put_mapping(self):
-        """
-        Create the index and mapping in ES
-        """
-        es = self.es
-        body = {}
-        index_settings = settings.ELASTICSEARCH_CONNECTIONS[self._meta.using].get("SETTINGS", None)
-        if index_settings:
-            body['settings'] = index_settings
-
-        try:
-            es.indices.create(index=self.index, body=body)
-        except elasticsearch.exceptions.RequestError as e:
-            if "IndexAlreadyExistsException" not in str(e):
-                raise
-
-        es.indices.put_mapping(index=self.index, doc_type=self.doc_type, body=self.get_mapping())
-
-    def delete_mapping(self):
-        try:
-            self.es.indices.delete_mapping(index=self.index, doc_type=self.doc_type)
-        except elasticsearch.exceptions.NotFoundError as e:
-            if "IndexMissingException" in str(e):
-                pass
-            elif "TypeMissingException" in str(e):
-                pass
-            else:
-                raise
-
-    def all(self):
-        """Provide a similar API to a Django model"""
-        return self.search
-
-    def filter(self, *args, **kwargs):
-        """Provide a shortcut to the DSL filter method"""
-        return self.all().filter(*args, **kwargs)
-
-    def query(self, *args, **kwargs):
-        """Provide a shortcut to the DSL query method"""
-        return self.all().query(*args, **kwargs)
 
     def bulk(self, actions, refresh=True, **kwargs):
         return bulk(client=self.es, actions=actions, refresh=refresh, **kwargs)
@@ -370,8 +287,8 @@ class Index(metaclass=IndexBase):
 
         operations = [{
             '_op_type': action,
-            '_index': self.index,
-            '_type': self.doc_type,
+            '_index': self._doc_type.index,
+            '_type': self._doc_type.mapping.doc_type,
             '_id': model.pk,
             # we don't do all the work of preparing a model when we're deleting
             # it
@@ -393,3 +310,20 @@ class Index(metaclass=IndexBase):
         Delete the thing from ES
         """
         self.update(thing, action="delete", **kwargs)
+
+    def put_mapping(self):
+        """
+        Create the index and mapping in ES
+        """
+        self.init()
+
+    def delete_mapping(self):
+        try:
+            self.es.indices.delete_mapping(index=self._doc_type.index, doc_type=self._doc_type.mapping.doc_type)
+        except elasticsearch.exceptions.NotFoundError as e:
+            if "IndexMissingException" in str(e):
+                pass
+            elif "TypeMissingException" in str(e):
+                pass
+            else:
+                raise

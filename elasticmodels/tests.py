@@ -3,7 +3,7 @@ import tempfile
 import datetime
 from unittest.mock import Mock, patch
 from elasticsearch import Elasticsearch, NotFoundError
-
+import time
 
 from django.db import models, connection
 from django.test import TestCase
@@ -12,9 +12,9 @@ from django.utils.timezone import utc, now
 from django.utils import timezone
 from model_mommy.mommy import prepare
 
-from .fields import TypedField, TemplateField, StringField, ObjectField, ListField
-from .indexes import Index, IndexOptions, suspended_updates, IndexRegistry
-from .exceptions import VariableLookupError, UndefinedFieldNameError, RedeclaredFieldError
+from .fields import EMField, Template, String, Object, List
+from .indexes import Index, suspended_updates, IndexRegistry
+from .exceptions import VariableLookupError, RedeclaredFieldError
 from .management.commands.clear_index import Command as ClearCommand
 from .management.commands.update_index import Command as UpdateCommand
 from .management.commands import get_models
@@ -23,9 +23,9 @@ from .management.commands import get_models
 class ESTest(TestCase):
     def setUp(self):
         super().setUp()
-        es = Elasticsearch(settings.ELASTICSEARCH_CONNECTIONS['default']['HOSTS'])
+        es = Elasticsearch(settings.ELASTICSEARCH_CONNECTIONS['default']['hosts'])
         try:
-            es.indices.delete(index=settings.ELASTICSEARCH_CONNECTIONS['default']['INDEX_NAME'])
+            es.indices.delete(index=settings.ELASTICSEARCH_CONNECTIONS['default']['index_name'])
         except NotFoundError as e:
             if "IndexMissingException" not in str(e):
                 raise e
@@ -44,52 +44,46 @@ class Dummy:
         return getattr(self, name)
 
 
-class TypedFieldTest(TestCase):
-    def test_get_mapping(self):
-        field = TypedField("foo")
-        self.assertEqual({
-            "type": "string",
-        }, field.get_mapping())
-
+class EMFieldTest(TestCase):
     def test_get_from_instance(self):
-        field = TypedField("alpha.beta.gamma")
+        field = EMField(attr="alpha.beta.gamma")
         m = Dummy()
         m.alpha.beta.gamma = 1
         self.assertEqual(1, field.get_from_instance(m))
 
         # test callables along the path
-        field = TypedField("alpha.beta.gamma")
+        field = EMField(attr="alpha.beta.gamma")
         m = Dummy()
         m.alpha.beta = lambda: Dummy(gamma=lambda: 2)
         self.assertEqual(2, field.get_from_instance(m))
 
         # test dicts along the the path
-        field = TypedField("alpha.beta.gamma")
+        field = EMField(attr="alpha.beta.gamma")
         m = Dummy()
         m.alpha = {"beta": Dummy(gamma=3)}
         self.assertEqual(3, field.get_from_instance(m))
 
         # test list index along the path
-        field = TypedField("alpha.beta.3")
+        field = EMField(attr="alpha.beta.3")
         m = Dummy(alpha=Dummy(beta=["a", "b", "c", "d"]))
         self.assertEqual("d", field.get_from_instance(m))
 
         # an index that doesn't exist should fail hard
-        field = TypedField("alpha.beta.100")
+        field = EMField(attr="alpha.beta.100")
         m = Dummy(alpha=Dummy(beta=["a", "b", "c", "d"]))
         self.assertRaises(VariableLookupError, field.get_from_instance, m)
 
         # an index that doesn't exist should fail hard
-        field = TypedField("alpha.beta.gamma")
+        field = EMField(attr="alpha.beta.gamma")
         m = Dummy(alpha=1)
         self.assertRaises(VariableLookupError, field.get_from_instance, m)
 
 
 class ObjectFieldField(TestCase):
     def test_get_mapping(self):
-        field = ObjectField("person", properties={
-            "first_name": StringField(analyzier="foo"),
-            "last_name": StringField
+        field = Object(attr="person", properties={
+            "first_name": String(analyzier="foo"),
+            "last_name": String()
         })
 
         self.assertEqual({
@@ -98,16 +92,12 @@ class ObjectFieldField(TestCase):
                 "first_name": {"type": "string", "analyzier": "foo"},
                 "last_name": {"type": "string"},
             }
-        }, field.get_mapping())
-
-    def test_init(self):
-        # the properties argument should be required
-        self.assertRaises(TypeError, ObjectField)
+        }, field.to_dict())
 
     def test_get_from_instance(self):
-        field = ObjectField("person", properties={
-            "first_name": StringField(analyzier="foo"),
-            "last_name": StringField
+        field = Object(attr="person", properties={
+            "first_name": String(analyzier="foo"),
+            "last_name": String()
         })
 
         d = Dummy()
@@ -119,51 +109,36 @@ class ObjectFieldField(TestCase):
         })
 
 
-class ListFieldTest(TestCase):
+class ListTest(TestCase):
     def test_name_set(self):
         """
         This is a regression test that ensures the Field has a
         `name` attribute
         """
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+
         class CarIndex(Index):
-            colors = ListField(StringField)
+            colors = List(String())
 
             def prepare_colors(self, instance):
                 # override this since there is no model attribute named "color"
                 return ["red", "green", "blue"]
 
             class Meta:
+                model = Car
                 fields = ['name']
 
-        class Car(models.Model):
-            name = models.CharField(max_length=255)
-
-            search = CarIndex()
-
-        # need to call this manually since AppConfig.prepare doesn't run
-        Car.search.construct()
-
-        self.assertEqual("colors", Car.search.fields[0].name)
-
     def test_get_mapping(self):
-        field = ListField(StringField(attr="foo.bar"))
+        field = List(String(attr="foo.bar"))
         self.assertEqual({
             "type": "string",
-        }, field.get_mapping())
-
-    def test_properties(self):
-        field = ListField(StringField(attr="foo.bar"))
-        self.assertEqual(field.field.path, ["foo", "bar"])
-        self.assertEqual(field.name, "bar")
-        # if I change the name on the list field, it should propagate to the
-        # child field
-        field.name = "asdf"
-        self.assertEqual(field.field.name, "asdf")
+        }, field.to_dict())
 
     def test_get_from_instance(self):
         d = Dummy()
         d.foo.bar = ['alpha', 'beta', 'gamma']
-        field = ListField(StringField("foo.bar"))
+        field = List(String(attr="foo.bar"))
         self.assertEqual(list(field.get_from_instance(d)), d.foo.bar)
 
 
@@ -174,45 +149,22 @@ class TemplateFieldTest(TestCase):
         f.flush()
 
         with self.settings(TEMPLATE_DIRS=[os.path.normpath(os.path.dirname(f.name))]):
-            field = TemplateField(os.path.basename(f.name))
+            field = Template(os.path.basename(f.name))
             self.assertEqual(field.get_from_instance({"name": "foo"}), "foo")
 
         f.close()
-
-
-class IndexOptionsTest(TestCase):
-    def test_defaults(self):
-        options = IndexOptions(object)
-        self.assertEqual(options.model_field_names, ())
-        self.assertEqual(options.class_fields, ())
-        self.assertEqual(options.doc_type, None)
-        self.assertEqual(options.using, "default")
-        self.assertEqual(options.dynamic, "strict")
-
-    def test_settings(self):
-        class Meta:
-            fields = [
-                'alpha',
-                'beta'
-            ]
-            doc_type = "lame"
-            using = "test"
-            dynamic = "bar"
-
-        options = IndexOptions(Meta)
-        self.assertEqual(options.model_field_names, ('alpha', 'beta'))
-        self.assertEqual(options.doc_type, "lame")
-        self.assertEqual(options.using, "test")
-        self.assertEqual(options.dynamic, "bar")
 
 
 class IndexTest(ESTest):
     def setUp(self):
         super().setUp()
 
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+
         # create a dummy index and model to play with
         class CarIndex(Index):
-            color = StringField()
+            color = String()
 
             def prepare_color(self, instance):
                 # override this since there is no model attribute named "color"
@@ -220,66 +172,58 @@ class IndexTest(ESTest):
 
             class Meta:
                 fields = ['name']
-
-        class Car(models.Model):
-            name = models.CharField(max_length=255)
-
-            search = CarIndex()
+                model = Car
+                doc_type = "elasticmodels_car"
 
         self.CarIndex = CarIndex
         self.Car = Car
-        # we need to call this manually since AppConfig.ready doesn't run
-        Car.search.construct()
 
     def test_model_class_added(self):
-        self.assertEqual(self.Car.search.model, self.Car)
+        self.assertEqual(self.CarIndex._doc_type.model, self.Car)
 
     def test_cannot_access_index_from_model_class(self):
         car = self.Car()
         self.assertRaises(AttributeError, lambda: car.search)
 
     def test_fields_populated(self):
-        self.assertEqual(list(field.name for field in self.Car.search.fields), ["color", "name"])
+        self.assertEqual(set(self.CarIndex.objects._doc_type.mapping.properties.properties.to_dict().keys()), set(["color", "name"]))
 
     def test_doc_type(self):
-        self.assertEqual(self.Car.search.doc_type, "elasticmodels_car")
+        self.assertEqual(self.CarIndex._doc_type.mapping.doc_type, "elasticmodels_car")
 
     def test_duplicate_field_names_not_allowed(self):
-        class CarIndex(Index):
-            color = StringField()
-            # this should trigger the error
-            name = StringField()
-
-            class Meta:
-                fields = ['name']
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
 
         with self.assertRaises(RedeclaredFieldError):
-            class Car(models.Model):
-                name = models.CharField(max_length=255)
+            class CarIndex(Index):
+                color = String()
+                # this should trigger the error
+                name = String()
 
-                search = CarIndex()
-
-            # need to call this manually since AppConfig.prepare doesn't run
-            Car.search.construct()
+                class Meta:
+                    fields = ['name']
+                    model = Car
 
     def test_mapping(self):
-        self.assertEqual(self.Car.search.get_mapping(), {
-            'dynamic': "strict",
-            'properties': {
-                'color': {
-                    'type': 'string'
-                },
-                'name': {
-                    'type': 'string'
+        self.assertEqual(self.CarIndex.objects._doc_type.mapping.to_dict(), {
+            'elasticmodels_car': {
+                'properties': {
+                    'color': {
+                        'type': 'string'
+                    },
+                    'name': {
+                        'type': 'string'
+                    }
                 }
             }
         })
 
     def test_put_mapping(self):
-        self.assertFalse(self.Car.search.es.indices.exists(self.Car.search.index))
-        self.Car.search.put_mapping()
-        self.assertTrue(self.Car.search.es.indices.exists(self.Car.search.index))
-        self.assertEqual(self.Car.search.es.indices.get_mapping(index=self.Car.search.index, doc_type=self.Car.search.doc_type), {
+        self.assertFalse(self.CarIndex.objects.es.indices.exists(self.CarIndex.objects._doc_type.index))
+        self.CarIndex.objects.put_mapping()
+        self.assertTrue(self.CarIndex.objects.es.indices.exists(self.CarIndex.objects._doc_type.index))
+        self.assertEqual(self.CarIndex.objects.es.indices.get_mapping(index=self.CarIndex.objects._doc_type.index, doc_type=self.CarIndex.objects._doc_type.mapping.doc_type), {
             'elasticmodels-unit-test-db': {
                 'mappings': {
                     'elasticmodels_car': {
@@ -291,44 +235,44 @@ class IndexTest(ESTest):
                                 'type': 'string'
                             }
                         },
-                        'dynamic': 'strict'
+                        #'dynamic': 'strict'
                     }
                 }
             }
         })
         # putting the mapping twice shouldn't be a problem
-        self.Car.search.put_mapping()
+        self.CarIndex.objects.put_mapping()
 
     def test_delete_mapping(self):
-        self.Car.search.put_mapping()
-        self.assertEqual(1, len(self.Car.search.es.indices.get_mapping(index=self.Car.search.index, doc_type=self.Car.search.doc_type)))
-        self.Car.search.delete_mapping()
-        self.assertEqual(0, len(self.Car.search.es.indices.get_mapping(index=self.Car.search.index, doc_type=self.Car.search.doc_type)))
+        self.CarIndex.objects.put_mapping()
+        self.assertEqual(1, len(self.CarIndex.objects.es.indices.get_mapping(index=self.CarIndex.objects._doc_type.index, doc_type=self.CarIndex.objects._doc_type.mapping.doc_type)))
+        self.CarIndex.objects.delete_mapping()
+        self.assertEqual(0, len(self.CarIndex.objects.es.indices.get_mapping(index=self.CarIndex.objects._doc_type.index, doc_type=self.CarIndex.objects._doc_type.mapping.doc_type)))
 
     def test_get_queryset(self):
         # create a dummy index and model to play with
-        class CarIndex(Index):
-            class Meta:
-                fields = ['name']
-                date_field = "modified_on"
-
         class Car(models.Model):
             name = models.CharField(max_length=255)
             modified_on = models.DateTimeField(auto_now=True)
 
-            search = CarIndex()
+        class CarIndex(Index):
+            class Meta:
+                fields = ['name']
+                date_field = "modified_on"
+                model = Car
+
 
         date = datetime.datetime(2015, 4, 13, 1, 1, 1, tzinfo=utc)
-        queryset = Car.search.get_queryset(start=date)
+        queryset = CarIndex.objects.get_queryset(start=date)
         self.assertIn('"modified_on" >= 2015-04-13 01:01:01', str(queryset.query))
-        queryset = Car.search.get_queryset(end=date)
+        queryset = CarIndex.objects.get_queryset(end=date)
         self.assertIn('"modified_on" <= 2015-04-13 01:01:01', str(queryset.query))
 
     def test_update(self):
         car = prepare(self.Car, pk=5)
         # test .update with an single model object
         with patch("elasticmodels.indexes.bulk") as m:
-            self.Car.search.update(car)
+            self.CarIndex.objects.update(car)
             self.assertEqual((m.call_args[1]['actions'][0]), {
                 '_id': 5,
                 '_index': 'elasticmodels-unit-test-db',
@@ -342,7 +286,7 @@ class IndexTest(ESTest):
 
         # test .update with an iterable
         with patch("elasticmodels.indexes.bulk") as m:
-            self.Car.search.update([car])
+            self.CarIndex.objects.update([car])
             self.assertEqual((m.call_args[1]['actions'])[0], {
                 '_id': 5,
                 '_index': 'elasticmodels-unit-test-db',
@@ -355,10 +299,10 @@ class IndexTest(ESTest):
             })
 
         # test local storage queuing
-        local_storage = Mock(bulk_queue={self.Car.search: []})
+        local_storage = Mock(bulk_queue={self.CarIndex.objects.index: []})
         with patch("elasticmodels.indexes.local_storage", local_storage):
-            self.Car.search.update([car])
-            self.assertEqual(list(local_storage.bulk_queue[self.Car.search][0]), [{
+            self.CarIndex.objects.update([car])
+            self.assertEqual(list(local_storage.bulk_queue[self.CarIndex.objects.index][0]), [{
                 '_index': 'elasticmodels-unit-test-db',
                 '_op_type': 'index',
                 '_type': 'elasticmodels_car',
@@ -371,14 +315,14 @@ class IndexTest(ESTest):
 
     def test_delete(self):
         car = prepare(self.Car, pk=5)
-        self.Car.search.update(car)
-        self.assertEqual(1, len(self.Car.search.query("match", name=car.name).execute().hits))
-        self.Car.search.delete(car)
-        self.assertEqual(0, len(self.Car.search.query("match", name=car.name).execute().hits))
+        self.CarIndex.objects.update(car)
+        self.assertEqual(1, len(self.CarIndex.objects.query("match", name=car.name).execute().hits))
+        self.CarIndex.objects.delete(car)
+        self.assertEqual(0, len(self.CarIndex.objects.query("match", name=car.name).execute().hits))
 
     def test_prepare(self):
         car = prepare(self.Car, pk=5)
-        prepared = self.Car.search.prepare(car)
+        prepared = self.CarIndex.objects.prepare(car)
         self.assertEqual({
             "name": car.name,
             "color": "blue",
@@ -413,9 +357,9 @@ class IndexRegistryTest(ESTest):
         class A_Model:
             pass
 
-        index_1 = Mock(ignore_signals=False)
-        index_2 = Mock(ignore_signals=False)
-        index_3 = Mock(ignore_signals=True)
+        index_1 = Mock(_doc_type=Mock(ignore_signals=False))
+        index_2 = Mock(_doc_type=Mock(ignore_signals=False))
+        index_3 = Mock(_doc_type=Mock(ignore_signals=True))
 
         r.register(A_Model, index_1)
         r.register(A_Model, index_2)
@@ -434,9 +378,9 @@ class IndexRegistryTest(ESTest):
         class A_Model:
             pass
 
-        index_1 = Mock(ignore_signals=False)
-        index_2 = Mock(ignore_signals=False)
-        index_3 = Mock(ignore_signals=True)
+        index_1 = Mock(_doc_type=Mock(ignore_signals=False))
+        index_2 = Mock(_doc_type=Mock(ignore_signals=False))
+        index_3 = Mock(_doc_type=Mock(ignore_signals=True))
 
         r.register(A_Model, index_1)
         r.register(A_Model, index_2)
@@ -452,62 +396,60 @@ class IndexRegistryTest(ESTest):
 
 class SuspendedUpdatesTest(ESTest):
     def test(self):
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+
         class CarIndex(Index):
             class Meta:
                 fields = ['name']
-
-        class Car(models.Model):
-            name = models.CharField(max_length=255)
-            search = CarIndex()
+                model = Car
 
 
-        # need to call this manually since AppConfig.prepare doesn't run
-        Car.search.construct()
-
-        Car.search.put_mapping()
+        CarIndex.objects.put_mapping()
+        # I don't understand why this is the *only* test that will randomly
+        # blow up, unless you give ES a little time to do its thing
+        time.sleep(.1)
 
         with suspended_updates():
             car = prepare(Car, pk=1)
             car2 = prepare(Car, pk=2)
             car3 = prepare(Car, pk=3)
-            Car.search.update([car])
-            Car.search.update(car2)
-            Car.search.update(car3)
+            CarIndex.objects.update([car])
+            CarIndex.objects.update(car2)
+            CarIndex.objects.update(car3)
             # bulk saving shouldn't happen yet
-            self.assertEqual([], Car.search.query("match", name=car.name).execute().hits)
+            self.assertEqual([], CarIndex.objects.query("match", name=car.name).execute().hits)
             # suspended_updates should handle deletes too
-            Car.search.delete(car3)
+            CarIndex.objects.delete(car3)
 
         # now saving to ES should have happen
-        self.assertEqual(1, len(Car.search.query("match", name=car.name).execute().hits))
-        self.assertEqual(1, len(Car.search.query("match", name=car2.name).execute().hits))
+        self.assertEqual(1, len(CarIndex.objects.query("match", name=car.name).execute().hits))
+        self.assertEqual(1, len(CarIndex.objects.query("match", name=car2.name).execute().hits))
         # the third car was deleted
-        self.assertEqual(0, len(Car.search.query("match", name=car3.name).execute().hits))
+        self.assertEqual(0, len(CarIndex.objects.query("match", name=car3.name).execute().hits))
 
 
 class ReceiverTest(ESTest):
     def test_save(self):
+        class Car(models.Model):
+            name = models.CharField(max_length=255)
+
         class CarIndex(Index):
             class Meta:
                 fields = ['name']
+                model = Car
 
-        class Car(models.Model):
-            name = models.CharField(max_length=255)
-            search = CarIndex()
 
         with connection.schema_editor() as editor:
             editor.create_model(Car)
 
-        # need to call this manually since AppConfig.prepare doesn't run
-        Car.search.construct()
-
         car = prepare(Car)
         # this should add the model to ES
         car.save()
-        self.assertEqual(1, len(Car.search.query("match", name=car.name).execute().hits))
+        self.assertEqual(1, len(CarIndex.objects.query("match", name=car.name).execute().hits))
         # this should remove the model from ES
         car.delete()
-        self.assertEqual(0, len(Car.search.query("match", name=car.name).execute().hits))
+        self.assertEqual(0, len(CarIndex.objects.query("match", name=car.name).execute().hits))
 
 
 class UpdateCommandTest(ESTest):
@@ -536,7 +478,7 @@ class UpdateCommandTest(ESTest):
         model = Dummy()
         index = Mock()
         index.get_queryset = Mock(return_value=Mock(count=lambda: 1))
-        index._meta.using = "foo"
+        index._doc_type.using = "foo"
         index2 = Mock()
         with patch("elasticmodels.management.commands.update_index.get_models", Mock(return_value=[model])):
             with patch("elasticmodels.management.commands.registry.indexes_for_model", Mock(return_value=[index, index2])):
@@ -552,7 +494,7 @@ class ClearCommandTest(TestCase):
         model = Dummy()
         index = Mock()
         index.get_queryset = Mock(return_value=Mock(count=lambda: 1))
-        index._meta.using = "foo"
+        index._doc_type.using = "foo"
         index2 = Mock()
         with patch("elasticmodels.management.commands.clear_index.get_models", Mock(return_value=[model])):
             with patch("elasticmodels.management.commands.registry.indexes_for_model", Mock(return_value=[index, index2])):
