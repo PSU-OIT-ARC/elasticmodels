@@ -15,6 +15,14 @@ class EMField(Field):
         # parameter, which can be a dotted string "path" like "foo.bar"
         self._path = attr.split(".") if attr else []
 
+    def __setattr__(self, key, value):
+        # this is a hack we need to make List fields work, since we need to
+        # replace the "get_from_instance" method at runtime.
+        if key == "get_from_instance":
+            self.__dict__[key] = value
+        else:
+            super().__setattr__(key, value)
+
     def get_from_instance(self, instance):
         """
         Given an object to index with ES, return the value that should be put
@@ -89,11 +97,6 @@ def List(field):
             yield value
 
     field.get_from_instance = MethodType(get_from_instance, field)
-    # this is hacky, but the __setattr__ on DslBase which Field is a subclass
-    # of adds every attribute to _params. This creates infinite recurision when
-    # to_dict() is called, which is obviously a problem. So we remove the
-    # method from _params
-    field._params.pop("get_from_instance")
 
     return field
 

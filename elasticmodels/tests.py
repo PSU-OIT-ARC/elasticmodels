@@ -139,6 +139,10 @@ class ListTest(TestCase):
         d = Dummy()
         d.foo.bar = ['alpha', 'beta', 'gamma']
         field = List(String(attr="foo.bar"))
+        # these shouldn't be equal because field.get_from_instance is a
+        # generator
+        self.assertNotEqual(field.get_from_instance(d), d.foo.bar)
+        # converting to a list will make them equal
         self.assertEqual(list(field.get_from_instance(d)), d.foo.bar)
 
 
