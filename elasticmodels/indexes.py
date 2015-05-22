@@ -6,7 +6,6 @@ import threading
 
 from six import add_metaclass
 from django.db import models
-import elasticsearch
 from elasticsearch.helpers import bulk
 from elasticsearch_dsl.connections import connections
 from elasticsearch_dsl.document import DocTypeMeta
@@ -16,13 +15,13 @@ from elasticsearch_dsl import DocType
 from .exceptions import RedeclaredFieldError, ModelFieldNotMappedError
 from .fields import (
     EMField,
-    String,
-    Double,
-    Short,
-    Integer,
-    Long,
-    Date,
-    Boolean,
+    StringField,
+    DoubleField,
+    ShortField,
+    IntegerField,
+    LongField,
+    DateField,
+    BooleanField,
 )
 
 
@@ -78,6 +77,9 @@ class IndexRegistry:
     def indexes_for_model(self, model):
         return self.model_to_indexes[model]
 
+    def indexes_for_connection(self, using):
+        return (index for index in self.get_indexes() if index._doc_type.using == using)
+
 
 registry = IndexRegistry()
 
@@ -105,27 +107,27 @@ def suspended_updates():
 
 
 model_field_class_to_field_class = {
-    models.AutoField: Integer,
-    models.BigIntegerField: Long,
-    models.BooleanField: Boolean,
-    models.CharField: String,
-    models.DateField: Date,
-    models.DateTimeField: Date,
-    models.EmailField: String,
-    models.FileField: String,
-    models.FilePathField: String,
+    models.AutoField: IntegerField,
+    models.BigIntegerField: LongField,
+    models.BooleanField: BooleanField,
+    models.CharField: StringField,
+    models.DateField: DateField,
+    models.DateTimeField: DateField,
+    models.EmailField: StringField,
+    models.FileField: StringField,
+    models.FilePathField: StringField,
     # python's float has the same precision as Java's double
-    models.FloatField: Double,
-    models.ImageField: String,
-    models.IntegerField: Integer,
-    models.NullBooleanField: Boolean,
-    models.PositiveIntegerField: Integer,
-    models.PositiveSmallIntegerField: Short,
-    models.SlugField: String,
-    models.SmallIntegerField: Short,
-    models.TextField: String,
-    models.TimeField: Long,
-    models.URLField: String,
+    models.FloatField: DoubleField,
+    models.ImageField: StringField,
+    models.IntegerField: IntegerField,
+    models.NullBooleanField: BooleanField,
+    models.PositiveIntegerField: IntegerField,
+    models.PositiveSmallIntegerField: ShortField,
+    models.SlugField: StringField,
+    models.SmallIntegerField: ShortField,
+    models.TextField: StringField,
+    models.TimeField: LongField,
+    models.URLField: StringField,
 }
 
 
@@ -149,6 +151,9 @@ class DocTypeProxy(object):
 
     def __getattr__(self, key):
         return getattr(self.index, key)
+
+    def __str__(self):
+        return str(self.index._doc_type.name)
 
 
 class EMDocTypeMeta(DocTypeMeta):
@@ -315,15 +320,19 @@ class Index(DocType):
         """
         Create the index and mapping in ES
         """
-        self.init()
+        index_name = self._doc_type.index
+
+        if not self.es.indices.exists(index=index_name):
+            analysis = collect_analysis(self._doc_type.using)
+            self.es.indices.create(index=index_name, body={'settings': {'analysis': analysis}})
+
+        return self.es.indices.put_mapping(
+            index=index_name,
+            doc_type=self._doc_type.mapping.doc_type,
+            body=self._doc_type.mapping.to_dict()
+        )
 
     def delete_mapping(self):
-        try:
-            self.es.indices.delete_mapping(index=self._doc_type.index, doc_type=self._doc_type.mapping.doc_type)
-        except elasticsearch.exceptions.NotFoundError as e:
-            if "IndexMissingException" in str(e):
-                pass
-            elif "TypeMissingException" in str(e):
-                pass
-            else:
-                raise
+        return self.es.indices.delete_mapping(index=self._doc_type.index, doc_type=self._doc_type.mapping.doc_type, ignore=[404])
+
+from .analysis import collect_analysis

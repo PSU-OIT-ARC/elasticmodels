@@ -5,7 +5,7 @@ elasticsearch.
 # Features:
 - Management commands (rebuild_index and update_index, clear_index)
 - Django signal receivers on save and delete for keeping ES in sync
-- Complex field type support (Object, Nested, List)
+- Complex field type support (ObjectField, NestedField, ListField)
 - Based of the features of elasticsearch-dsl
 
 # Quick Start:
@@ -45,7 +45,7 @@ To make this model work with Elasticsearch, create a subclass of
 `elasticmodels.Index`:
 
 ```python
-from elasticmodels import Index, String, Integer, Nested
+from elasticmodels import Index, StringField, IntegerField, NestedField
 from .models import Car
 
 
@@ -114,7 +114,7 @@ like this:
 class CarIndex(Index):
     # add a string field to the Elasticsearch mapping called type, the value of
     # which is derived from the model's type_to_string attribute
-    type = String(attr="type_to_string")
+    type = StringField(attr="type_to_string")
 
     class Meta:
         model = Car
@@ -156,11 +156,11 @@ to ES.
 
 ```python
 class CarIndex(Index):
-    type = String(attr="type_to_string")
+    type = StringField(attr="type_to_string")
 
-    extra_data = Nested(properties={
-        "a_key": String(),
-        "number": Integer(attr="another_key")
+    extra_data = NestedField(properties={
+        "a_key": StringField(),
+        "number": IntegerField(attr="another_key")
     })
 
     class Meta:
@@ -175,6 +175,26 @@ class CarIndex(Index):
 When a Car is saved, `model_instance.extra_data` will be looked up/called, and whatever
 it returns, will be used as the basis to populate the sub-fields listed in `properties`.
 
+## Using ListField
+
+If you want to store a list of values for a particular field, wrap the field
+with `ListField`:
+
+```python
+class Car(models.Model):
+    # ... #
+    @property
+    def some_stuff(self):
+        """Generate some extra data to save with the model in ES"""
+        return ["alpha", "beta", "gamma"]
+
+class CarIndex(Index):
+    # ... #
+    some_stuff = ListField(StringField(attr="some_stuff"))
+
+    # ... #
+```
+
 ## Using prepare_field
 
 Sometimes, you need to do some extra prepping before a field should be saved to
@@ -186,7 +206,7 @@ needs to be saved.
 class CarIndex(Index):
     # ... #
 
-    foo = String()
+    foo = StringField()
 
     def prepare_foo(self, instance):
         return " ".join(instance.foos)
@@ -226,9 +246,12 @@ before doing it. You can limit which connections and models/apps are affected.
 Update every model index. You can limit the scope of the updates by passing a
 start and end date, and/or which models/apps/connections to use.
 
-`rebuild_index [--using default --using ...] [--noinput] <app[.model] app[.model] ...>`
+`rebuild_index [--clopen] [--using default --using ...] [--noinput] <app[.model] app[.model] ...>`
 
-Shortcut to clear_index and update_index.
+Shortcut to clear_index and update_index. It will detect a conflict in your
+analyzers. If there is a conflict, it will show a diff of the analysis sections
+defined in Python and ES. Use `--clopen` to close the ES index, update the
+analysis, and reopen the ES index.
 
 # Field Classes
 
@@ -260,24 +283,67 @@ created.**
 
 ## Simple Fields
 
-- String(attr=None, \*\*elasticsearch_properties)
-- Float(attr=None, \*\*elasticsearch_properties)
-- Double(attr=None, \*\*elasticsearch_properties)
-- Byte(attr=None, \*\*elasticsearch_properties)
-- Short(attr=None, \*\*elasticsearch_properties)
-- Integer(attr=None, \*\*elasticsearch_properties)
-- Date(attr=None, \*\*elasticsearch_properties)
-- Boolean(attr=None, \*\*elasticsearch_properties)
+- StringField(attr=None, \*\*elasticsearch_properties)
+- FloatField(attr=None, \*\*elasticsearch_properties)
+- DoubleField(attr=None, \*\*elasticsearch_properties)
+- ByteField(attr=None, \*\*elasticsearch_properties)
+- ShortField(attr=None, \*\*elasticsearch_properties)
+- IntegerField(attr=None, \*\*elasticsearch_properties)
+- DateField(attr=None, \*\*elasticsearch_properties)
+- BooleanField(attr=None, \*\*elasticsearch_properties)
 
 ## Complex Fields
 
 `properties` is a dict where the key is a field name, and the value is a field
-instance or class.
+instance.
 
-- Template(template_name, \*\*elasticsearch_properties)
-- Object(properties, attr=None, \*\*elasticsearch_properties)
-- Nested(properties, attr=None, \*\*elasticsearch_properties)
-- List(field)
+- TemplateField(template_name, \*\*elasticsearch_properties)
+- ObjectField(properties, attr=None, \*\*elasticsearch_properties)
+- NestedField(properties, attr=None, \*\*elasticsearch_properties)
+- ListField(field)
+
+# Analyzers
+
+You can define analyzers and use them on fields:
+
+```python
+from elasticmodels import Index, ListField, IntegerField, StringField
+from elasticsearch_dsl import analyzer, tokenizer, token_filter
+
+name = analyzer(
+    "name",
+    # the standard analyzer splits the words nicely by default
+    tokenizer=tokenizer("standard"),
+    filter=[
+        # technically, the standard filter doesn't do anything but we include
+        # it anyway just in case ES decides to make use of it
+        "standard",
+        # obviously, lowercasing the tokens is a good thing
+        "lowercase",
+        # ngram it up
+        token_filter(
+            "simple_edge",
+            type="nGram",
+            min_gram=2,
+            max_gram=4
+        )
+    ]
+)
+
+
+class CarIndex(Index):
+    # ... #
+
+    # use the builtin ES keyword analyzer
+    foo = StringField(analyzer=analyzer("keyword"))
+    # use our fancy analyzer
+    name = StringField(analyzer=name)
+
+    # ... #
+```
+
+When the mapping is created in ES, the analyzer will be created for you.
+
 
 # Index Meta Options
 

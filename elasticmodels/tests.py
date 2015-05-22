@@ -3,6 +3,7 @@ import tempfile
 import datetime
 from unittest.mock import Mock, patch
 from elasticsearch import Elasticsearch, NotFoundError
+from collections import defaultdict
 import time
 
 from django.db import models, connection
@@ -12,7 +13,7 @@ from django.utils.timezone import utc, now
 from django.utils import timezone
 from model_mommy.mommy import prepare
 
-from .fields import EMField, Template, String, Object, List
+from .fields import EMField, TemplateField, StringField, ObjectField, ListField
 from .indexes import Index, suspended_updates, IndexRegistry
 from .exceptions import VariableLookupError, RedeclaredFieldError
 from .management.commands.clear_index import Command as ClearCommand
@@ -29,6 +30,7 @@ class ESTest(TestCase):
         except NotFoundError as e:
             if "IndexMissingException" not in str(e):
                 raise e
+
 
 class Dummy:
     """
@@ -81,9 +83,9 @@ class EMFieldTest(TestCase):
 
 class ObjectFieldField(TestCase):
     def test_get_mapping(self):
-        field = Object(attr="person", properties={
-            "first_name": String(analyzier="foo"),
-            "last_name": String()
+        field = ObjectField(attr="person", properties={
+            "first_name": StringField(analyzier="foo"),
+            "last_name": StringField()
         })
 
         self.assertEqual({
@@ -95,9 +97,9 @@ class ObjectFieldField(TestCase):
         }, field.to_dict())
 
     def test_get_from_instance(self):
-        field = Object(attr="person", properties={
-            "first_name": String(analyzier="foo"),
-            "last_name": String()
+        field = ObjectField(attr="person", properties={
+            "first_name": StringField(analyzier="foo"),
+            "last_name": StringField()
         })
 
         d = Dummy()
@@ -119,7 +121,7 @@ class ListTest(TestCase):
             name = models.CharField(max_length=255)
 
         class CarIndex(Index):
-            colors = List(String())
+            colors = ListField(StringField())
 
             def prepare_colors(self, instance):
                 # override this since there is no model attribute named "color"
@@ -130,7 +132,7 @@ class ListTest(TestCase):
                 fields = ['name']
 
     def test_get_mapping(self):
-        field = List(String(attr="foo.bar"))
+        field = ListField(StringField(attr="foo.bar"))
         self.assertEqual({
             "type": "string",
         }, field.to_dict())
@@ -138,7 +140,7 @@ class ListTest(TestCase):
     def test_get_from_instance(self):
         d = Dummy()
         d.foo.bar = ['alpha', 'beta', 'gamma']
-        field = List(String(attr="foo.bar"))
+        field = ListField(StringField(attr="foo.bar"))
         # these shouldn't be equal because field.get_from_instance is a
         # generator
         self.assertNotEqual(field.get_from_instance(d), d.foo.bar)
@@ -153,7 +155,7 @@ class TemplateFieldTest(TestCase):
         f.flush()
 
         with self.settings(TEMPLATE_DIRS=[os.path.normpath(os.path.dirname(f.name))]):
-            field = Template(os.path.basename(f.name))
+            field = TemplateField(os.path.basename(f.name))
             self.assertEqual(field.get_from_instance({"name": "foo"}), "foo")
 
         f.close()
@@ -168,7 +170,7 @@ class IndexTest(ESTest):
 
         # create a dummy index and model to play with
         class CarIndex(Index):
-            color = String()
+            color = StringField()
 
             def prepare_color(self, instance):
                 # override this since there is no model attribute named "color"
@@ -201,9 +203,9 @@ class IndexTest(ESTest):
 
         with self.assertRaises(RedeclaredFieldError):
             class CarIndex(Index):
-                color = String()
+                color = StringField()
                 # this should trigger the error
-                name = String()
+                name = StringField()
 
                 class Meta:
                     fields = ['name']
@@ -483,13 +485,16 @@ class UpdateCommandTest(ESTest):
         index = Mock()
         index.get_queryset = Mock(return_value=Mock(count=lambda: 1))
         index._doc_type.using = "foo"
+        index._doc_type.mapping._collect_analysis = lambda: {}
+        index._doc_type.mapping.to_dict = lambda: {}
         index2 = Mock()
-        with patch("elasticmodels.management.commands.update_index.get_models", Mock(return_value=[model])):
-            with patch("elasticmodels.management.commands.registry.indexes_for_model", Mock(return_value=[index, index2])):
-                cmd.handle(start="2010-10-10", end="2011-11-11", using=["foo"])
-                self.assertTrue(index.put_mapping.called)
-                self.assertTrue(index.update.called)
-                self.assertFalse(index2.put_mapping.called)
+        with self.settings(ELASTICSEARCH_CONNECTIONS={"foo": {"index_name": "bar"}}):
+            with patch("elasticmodels.management.commands.update_index.get_models", Mock(return_value=[model])):
+                with patch("elasticmodels.management.commands.registry.indexes_for_model", Mock(return_value=[index, index2])):
+                    cmd.handle(start="2010-10-10", end="2011-11-11", using=["foo"])
+                    # TODO more asserts
+                    self.assertTrue(index.update.called)
+                    self.assertFalse(index2.update.called)
 
 
 class ClearCommandTest(TestCase):

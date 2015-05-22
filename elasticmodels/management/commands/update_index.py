@@ -62,7 +62,7 @@ class Command(BaseCommand):
             for model in models:
                 for index in registry.indexes_for_model(model):
                     if index._doc_type.using == using:
-                        self.stdout.write("Putting mapping for %s" % index.__class__.__name__)
+                        self.stdout.write("Putting mapping for %s" % str(index))
                         index.put_mapping()
 
                         qs = index.get_queryset(start=start, end=end)

@@ -52,11 +52,11 @@ class EMField(Field):
         return instance
 
 
-class String(EMField, String):
+class StringField(EMField, String):
     pass
 
 
-class Object(EMField, Object):
+class ObjectField(EMField, Object):
     def get_from_instance(self, instance):
         obj = super().get_from_instance(instance)
         data = {}
@@ -75,15 +75,15 @@ class Object(EMField, Object):
         return data
 
 
-class Nested(Object, Nested):
+class NestedField(Object, Nested):
     pass
 
 
-class Date(EMField, Date):
+class DateField(EMField, Date):
     pass
 
 
-def List(field):
+def ListField(field):
     """
     This wraps a field so that when get_from_instance is called, the field's
     values are iterated over
@@ -101,7 +101,7 @@ def List(field):
     return field
 
 
-class Template(String):
+class TemplateField(String):
     def __init__(self, template_name, **kwargs):
         self._template_name = template_name
         super().__init__(**kwargs)
@@ -113,5 +113,5 @@ class Template(String):
 
 # take all the basic fields from elasticsearch-dsl, and make them subclass EMField
 for f in FIELDS:
-    fclass = _make_dsl_class(EMField, f)
+    fclass = _make_dsl_class(EMField, f, suffix="Field")
     globals()[fclass.__name__] = fclass

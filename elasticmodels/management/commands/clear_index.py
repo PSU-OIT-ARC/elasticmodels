@@ -24,7 +24,7 @@ class Command(BaseCommand):
         else:
             response = "Y"
 
-        self.confirmed = response == "Y"
+        self.confirmed = response.lower() == "y"
         if not self.confirmed:
             return
 
