@@ -335,7 +335,7 @@ class CarIndex(Index):
     # ... #
 
     # use the builtin ES keyword analyzer
-    foo = StringField(analyzer=analyzer("keyword"))
+    foo = StringField(analyzer="keyword")
     # use our fancy analyzer
     name = StringField(analyzer=name)
 

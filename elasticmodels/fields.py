@@ -75,7 +75,7 @@ class ObjectField(EMField, Object):
         return data
 
 
-class NestedField(Object, Nested):
+class NestedField(ObjectField, Nested):
     pass
 
 
@@ -101,7 +101,7 @@ def ListField(field):
     return field
 
 
-class TemplateField(String):
+class TemplateField(StringField):
     def __init__(self, template_name, **kwargs):
         self._template_name = template_name
         super().__init__(**kwargs)
