@@ -580,16 +580,16 @@ class BaseSearchFormTest(TestCase):
                 self.assertEqual(type(form.results()), Pageable)
 
 
-
 class SearchFormTest(ESTest):
     def test_results_are_filtered_based_on_queryset(self):
-        class CarIndex(Index):
-            class Meta:
-                fields = ['name']
 
         class Car(models.Model):
             name = models.CharField(max_length=255)
-            search = CarIndex()
+
+        class CarIndex(Index):
+            class Meta:
+                fields = ['name']
+                model = Car
 
         with connection.schema_editor() as editor:
             editor.create_model(Car)
@@ -605,7 +605,7 @@ class SearchFormTest(ESTest):
                 # it isn't in the search results
                 return super().get_queryset().exclude(pk=1)
 
-        form = Form({"q": "hi"}, index=Car.search)
+        form = Form({"q": "hi"}, index=CarIndex)
         # the count should be 2 (not 3), since the queryset excluded Car.pk=1
         self.assertEqual(form.search().count(), 2)
         results = form.results(page=1)
@@ -614,5 +614,5 @@ class SearchFormTest(ESTest):
         class Form(BaseSearchForm):
             pass
 
-        form = Form({"q": "hi"}, index=Car.search)
+        form = Form({"q": "hi"}, index=CarIndex)
         self.assertEqual(set(form.results()), set([car, car2, car3]))

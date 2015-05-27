@@ -207,6 +207,10 @@ class EMDocTypeMeta(DocTypeMeta):
             field_instance = cls.objects.to_field(field_name, fields_lookup[field_name])
             cls._doc_type.mapping.field(field_name, field_instance)
 
+        # provide a shortcut to get the fields on the Index, since accessing
+        # them is so convoluted
+        cls._doc_type._fields = lambda: cls._doc_type.mapping.properties.properties.to_dict()
+
         return cls
 
 
@@ -247,7 +251,7 @@ class Index(DocType):
         """
         data = {}
         # There should be an easier way to get at the mapping's field instances...
-        for name, field in self._doc_type.mapping.properties.properties.to_dict().items():
+        for name, field in self._doc_type._fields().items():
             if not isinstance(field, EMField):
                 continue
 

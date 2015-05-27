@@ -41,6 +41,9 @@ class BaseSearchForm(forms.Form):
             self._in_search_mode = any(self.cleaned_data.values())
         return self._in_search_mode
 
+    def get_fields(self):
+        return list(self.index.objects._doc_type._fields().keys())
+
     def search(self):
         """
         This should return an elasticsearch-DSL Search instance, list or
@@ -52,7 +55,7 @@ class BaseSearchForm(forms.Form):
             results = results.query(
                 "multi_match",
                 query=self.cleaned_data['q'],
-                fields=['*'],
+                fields=self.get_fields(),
                 # this prevents ES from erroring out when a string is used on a
                 # number field (for example)
                 lenient=True
@@ -132,15 +135,15 @@ class Pageable:
         return self.search.count()
 
     def __iter__(self):
-        return iter(self[0:10])
+        return iter(self[0:self.count()])
 
     def __getitem__(self, key):
         results = list(self.search[key].execute())
-        pk_to_model = dict((str(row.pk), row) for row in self.queryset.filter(pk__in=[result._meta.id for result in results]))
+        pk_to_model = dict((str(row.pk), row) for row in self.queryset.filter(pk__in=[result.meta.id for result in results]))
         # we need to return the model objects in the order they were retrieved
         # from ES
         to_return = []
         for result in results:
-            if result._meta.id in pk_to_model:
-                to_return.append(pk_to_model[result._meta.id])
+            if result.meta.id in pk_to_model:
+                to_return.append(pk_to_model[result.meta.id])
         return to_return
