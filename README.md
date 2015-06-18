@@ -361,6 +361,22 @@ When the mapping is created in ES, the analyzer will be created for you.
         # the field to use for management commands when using the `--start` and
         # `--end` options. The default is None.
         date_field = "modified_on"
+        # when the .save() or .delete() method is called on a model
+        # object, any indexes for that model will automatically update the index
+        # in ES. If you don't want that behavior, change this to True
+        ignore_signals = False
+
+
+# Testing
+
+In your settings file, set
+
+    TEST_RUNNER = 'elasticmodels.SearchRunner'
+
+or subclass it with your own test runner. **By default, no data is inserted/updated/deleted by Elasticmodels** because it's slow.
+
+If you need a TestCase that actually hits ES, subclass `elasticmodels.ESTestCase`. For each test, all the indexes are destroyed and recreated. The index names are suffixed with "_test" so your data is not clobbered.
+
 
 # Tests:
 

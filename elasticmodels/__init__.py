@@ -16,3 +16,4 @@ from .fields import (  # noqa
     NestedField,
     ListField,
 )
+from .runner import SearchRunner, ESTestCase  # noqa
