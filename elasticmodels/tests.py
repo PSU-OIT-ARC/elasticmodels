@@ -544,30 +544,27 @@ class GetModelsTest(TestCase):
 
 class BaseSearchFormTest(TestCase):
     def test_in_search_mode(self):
-        form = BaseSearchForm(index=Mock())
+        form = BaseSearchForm(None, index=Mock())
         self.assertFalse(form.in_search_mode())
 
         form = BaseSearchForm({"q": "something"}, index=Mock())
         self.assertTrue(form.in_search_mode())
 
     def test_cleaned_data(self):
-        form = BaseSearchForm(index=Mock())
         # the first time cleaned_data is accessed, it should be updated
         with patch("elasticmodels.forms.BaseSearchForm.is_valid") as is_valid:
-            self.assertFalse(is_valid.called)
-            # when this is accessed, is_valid should be called
-            form.cleaned_data
+            form = BaseSearchForm(None, index=Mock())
             self.assertTrue(is_valid.called)
 
     def test_results(self):
-        form = BaseSearchForm(index=Mock())
+        form = BaseSearchForm(None, index=Mock())
         # if we're not in search mode, the results of get_queryset should be returned
         with patch("elasticmodels.forms.BaseSearchForm.get_queryset", return_value="foo") as get_queryset:
             self.assertEqual(form.results(), "foo")
 
         # if the search method doesn't return a Search object, whatever it
         # returns is the value of results()
-        form = BaseSearchForm(index=Mock())
+        form = BaseSearchForm(None, index=Mock())
         with patch("elasticmodels.forms.BaseSearchForm.in_search_mode", return_value=True):
             with patch("elasticmodels.forms.BaseSearchForm.search", return_value="asdf"):
                 self.assertEqual(form.results(), "asdf")
