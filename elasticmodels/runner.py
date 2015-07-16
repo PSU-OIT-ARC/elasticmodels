@@ -48,7 +48,7 @@ class ESTestCase(TestCase):
         destroy()
 
         for index in registry.get_indexes():
-            re.sub("_test$", "", index._doc_type.index)
+            index._doc_type.index = re.sub("_test$", "", index._doc_type.index)
 
         for p in patches:
             p.start()
