@@ -27,11 +27,7 @@ class ESTest(TestCase):
     def setUp(self):
         super().setUp()
         es = Elasticsearch(settings.ELASTICSEARCH_CONNECTIONS['default']['hosts'])
-        try:
-            es.indices.delete(index=settings.ELASTICSEARCH_CONNECTIONS['default']['index_name'])
-        except NotFoundError as e:
-            if "IndexMissingException" not in str(e):
-                raise e
+        es.indices.delete(index=settings.ELASTICSEARCH_CONNECTIONS['default']['index_name'], ignore=[404])
 
 
 class Dummy:
