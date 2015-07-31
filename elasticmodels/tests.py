@@ -567,10 +567,11 @@ class BaseSearchFormTest(TestCase):
 
         # if the search method returns a Search object, a call to results()
         # should return a Pageable object
-        with patch("elasticmodels.forms.BaseSearchForm.in_search_mode", return_value=True):
-            # if the search method doesn't return a Search object, whatever it returns is the value of results()
-            with patch("elasticmodels.forms.BaseSearchForm.search", return_value=Search()):
-                self.assertEqual(type(form.results()), Pageable)
+        with patch("elasticmodels.forms.BaseSearchForm.is_valid_query", return_value=True):
+            with patch("elasticmodels.forms.BaseSearchForm.in_search_mode", return_value=True):
+                # if the search method doesn't return a Search object, whatever it returns is the value of results()
+                with patch("elasticmodels.forms.BaseSearchForm.search", return_value=Search()):
+                    self.assertEqual(type(form.results()), Pageable)
 
 
 class SearchFormTest(ESTest):

@@ -89,6 +89,16 @@ class BaseSearchForm(forms.Form):
         """
         return self.index.objects.get_queryset()
 
+    def is_valid_query(self, search_instance):
+        validate = self.index.objects.es.indices.validate_query(
+            index=self.index._doc_type.index,
+            doc_type=self.index._doc_type.mapping.doc_type,
+            body={'query': search_instance.to_dict()['query']},
+            explain=True,
+        )
+
+        return validate['valid']
+
     def results(self):
         """
         This either returns self.get_queryset(), self.search(), or
@@ -104,6 +114,10 @@ class BaseSearchForm(forms.Form):
         # (hopefully) just a list or queryset.
         if not isinstance(objects, Search):
             return objects
+
+        if not self.is_valid_query(objects):
+            self.add_error(None, forms.ValidationError("Invalid Query", code="invalid-query"))
+            return []
 
         # convert the search results to something that can be iterated over, and paged
         return Pageable(objects, self.get_queryset())
