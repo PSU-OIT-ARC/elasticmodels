@@ -48,6 +48,8 @@ class EMField(Field):
 
             if callable(instance):
                 instance = instance()
+            elif instance is None:  # no sense walking down the path any further
+                return None
 
         return instance
 
