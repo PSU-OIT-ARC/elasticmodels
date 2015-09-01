@@ -27,7 +27,7 @@ ELASTICSEARCH_CONNECTIONS = {
 }
 ```
 
-Now consider a model like this:
+Now consider a model like this defined in our app's `models.py` file:
 
 ```python
 class Car(models.Model):
@@ -40,18 +40,10 @@ class Car(models.Model):
         (4, "SUV"),
     ])
 ```
-    
-Place this line of code at the **bottom** of the `models.py` file.
 
-```python
-from .indexes import * # noqa isort:skip
-```
-
-This is required for indexing, but placing it at the top would
-cause a circular import.
-
-Now, to make this model work with Elasticsearch, create a subclass of
-`elasticmodels.Index` in a file called `indexes.py`:
+To make this model work with Elasticsearch, create a subclass of
+`elasticmodels.Index`. You can define the class wherever you want. We'll put in
+a file called `indexes.py` inside our Django app:
 
 ```python
 from elasticmodels import Index, StringField, IntegerField, NestedField
@@ -68,6 +60,18 @@ class CarIndex(Index):
             'type',
         ]
 ```
+
+The Index subclass needs to be imported during the normal execution of your
+program. A good way to make that happen is to place this line of code at the
+**bottom** of the `models.py` file:
+
+```python
+from .indexes import * # noqa isort:skip
+```
+
+We have to put it at the bottom of the file, otherwise, we'd have a circular
+import problem. (The `# noqa isort:skip` stuff is useful if you're using the
+`flake8` and `isort` packages.)
 
 Elasticmodels will automatically setup a mapping in Elasticsearch for the Car
 model, where the Elasticsearch fields are derived from the `fields` attribute
