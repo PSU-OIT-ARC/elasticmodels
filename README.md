@@ -40,9 +40,18 @@ class Car(models.Model):
         (4, "SUV"),
     ])
 ```
+    
+Place this line of code at the **bottom** of the `models.py` file.
 
-To make this model work with Elasticsearch, create a subclass of
-`elasticmodels.Index`:
+```python
+from .indexes import * # noqa isort:skip
+```
+
+This is required for indexing, but placing it at the top would
+cause a circular import.
+
+Now, to make this model work with Elasticsearch, create a subclass of
+`elasticmodels.Index` in a file called `indexes.py`:
 
 ```python
 from elasticmodels import Index, StringField, IntegerField, NestedField
