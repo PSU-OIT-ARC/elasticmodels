@@ -7,6 +7,8 @@ from elasticsearch_dsl.connections import connections
 from django.conf import settings
 from .indexes import registry
 
+DOES_NOT_EXIST = 404
+
 
 def compare_dicts(d1, d2):
     """
@@ -66,7 +68,7 @@ def existing_analysis(using):
     index_name = settings.ELASTICSEARCH_CONNECTIONS[using]['index_name']
     if es.indices.exists(index=index_name):
         return stringer(es.indices.get_settings(index=index_name)[index_name]['settings']['index'].get('analysis', {}))
-    return {}
+    return DOES_NOT_EXIST
 
 
 def is_analysis_compatible(using):
@@ -75,6 +77,8 @@ def is_analysis_compatible(using):
     """
     python_analysis = collect_analysis(using)
     es_analysis = existing_analysis(using)
+    if es_analysis == DOES_NOT_EXIST:
+        return True
 
     # we want to ensure everything defined in Python land is exactly matched in ES land
     for section in python_analysis:
@@ -105,6 +109,8 @@ def combined_analysis(using):
     """
     python_analysis = collect_analysis(using)
     es_analysis = existing_analysis(using)
+    if es_analysis == DOES_NOT_EXIST:
+        return python_analysis
 
     # we want to ensure everything defined in Python land is added, or
     # overrides the things defined in ES
