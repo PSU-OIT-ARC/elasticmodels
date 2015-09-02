@@ -420,6 +420,33 @@ or subclass it with your own test runner. **By default, no data is inserted/upda
 
 If you need a TestCase that actually hits ES, subclass `elasticmodels.ESTestCase`. For each test, all the indexes are destroyed and recreated. The index names are suffixed with "_test" so your data is not clobbered.
 
+You can test against the results of a search form in the following way:
+
+```python
+import elasticmodels
+from model_mommy.mommy import make
+from django.test import TestCase
+
+from project.foo.models import Foo
+from project.foo.forms import FooSearchForm
+
+
+class FooSearchFormTest(TestCase, elasticmodels.ESTestCase):
+    # ... #
+    def test_foo_search_form_results(self):
+        query = 'foobar'
+        model = make(Foo, name=query)
+        # if you don't use model mommy, do Foo.objects.create(name=query) instead.
+
+        # Pass data into the form as a dictionary of search criteria.
+        form = FooSearchForm({'querystring': query}, user=self.user)
+        # Call .search() followed by .execute() to turn the results into a Response object.
+        # then make it into a list so the contents can be iterated/indexed.
+        results = list(form.search().execute())
+        # Now check for correct data.
+        self.assertEqual(results[0]['name'], model.name)
+    # ... #
+```
 
 # Tests:
 
