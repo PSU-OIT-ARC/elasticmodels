@@ -227,6 +227,36 @@ class CarIndex(Index):
     # ... #
 ```
 
+## Improving Performance with get_queryset
+
+The subclass of Index has a get_queryset method that by default, just returns
+the queryset on the model's default manager. If your indexed fields span
+foreign keys, you may want to override this to select the related models:
+
+```python
+class CarIndex(Index):
+    # ... #
+
+    # assume `make` and `model` are foreign keys on the Car model
+    make = StringField(attr="make.name")
+    model = StringField(attr="model.name")
+
+    # ... #
+
+    def get_queryset(self, start=None, end=None):
+        return super().get_queryset(start, end).select_related("make", "model")
+```
+
+Now when the CarIndex is rebuild, it won't have to do a bunch of extra queries
+to access the `make` and `model` fields.
+
+The get_queryset method takes `start` and `end` datetime objects as arguments,
+which is useful if you're using the `--start` and `--end` flags when using the
+management commands. The default implementation of get_queryset will use those
+arguments to filter based on the field named by the `date_field` attribute
+on the Meta class.
+
+
 ## Signal Receivers
 
 Elasticmodels watches for the post_save and post_delete signals and updates the
