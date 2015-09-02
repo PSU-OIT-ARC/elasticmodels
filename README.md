@@ -418,33 +418,32 @@ In your settings file, set
 
 or subclass it with your own test runner. **By default, no data is inserted/updated/deleted by Elasticmodels** because it's slow.
 
-If you need a TestCase that actually hits ES, subclass `elasticmodels.ESTestCase`. For each test, all the indexes are destroyed and recreated. The index names are suffixed with "_test" so your data is not clobbered.
+If you need a TestCase that actually hits ES, add the mixin `elasticmodels.ESTestCase` (this class subclasses unittest.TestCase). For each test, all the indexes are destroyed and recreated. The index names are suffixed with "_test" so your real data is not clobbered. If you override setUp(), make sure you call the superclass's setUp before creating model objects you want inserted into elasticsearch via Elasticmodels (via the post_save handler).
 
-You can test against the results of a search form in the following way:
+Here's an example:
 
 ```python
 import elasticmodels
-from model_mommy.mommy import make
 from django.test import TestCase
 
-from project.foo.models import Foo
-from project.foo.forms import FooSearchForm
+from project.cars.models import Car
+from project.cars.indexes import CarIndex
 
 
-class FooSearchFormTest(TestCase, elasticmodels.ESTestCase):
+class SomeTest(TestCase, elasticmodels.ESTestCase):
     # ... #
-    def test_foo_search_form_results(self):
-        query = 'foobar'
-        model = make(Foo, name=query)
-        # if you don't use model mommy, do Foo.objects.create(name=query) instead.
+    def setUp(self):
+        # by calling setUp(), elasticmodels will create all the elasticsearch
+        # indexes defined in your project, and suffix their names with _test
+        super().setUp()
 
-        # Pass data into the form as a dictionary of search criteria.
-        form = FooSearchForm({'querystring': query}, user=self.user)
-        # Call .search() followed by .execute() to turn the results into a Response object.
-        # then make it into a list so the contents can be iterated/indexed.
-        results = list(form.search().execute())
-        # Now check for correct data.
-        self.assertEqual(results[0]['name'], model.name)
+        self.car = Car(license="ND4SPD")
+        # When `car` is saved, it will be inserted into elasticsearch via
+        # elasticmodel's post_save handler
+        self.car.save()
+
+    def test_something(self):
+        self.assertEqual(1, CarIndex.objects.query("match", license="ND4SPD").count())
     # ... #
 ```
 
