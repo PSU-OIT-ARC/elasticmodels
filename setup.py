@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name='elasticmodels',
-    version='0.1.0',
+    version='0.2.0',
     install_requires=['elasticsearch','elasticsearch-dsl'],
     packages=find_packages(),
     long_description=open('README.md').read(),
