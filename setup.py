@@ -7,7 +7,7 @@ setup(
     install_requires=['elasticsearch','elasticsearch-dsl'],
     packages=find_packages(),
     long_description=open('README.md').read(),
-    author='Andrew Stoneman',
+    author='Matt Johnson',
     extras_require={
         'dev': [
             "mock",
